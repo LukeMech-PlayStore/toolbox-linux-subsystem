@@ -16,7 +16,7 @@ export ELF_CLEANER_TAG="v3.0.1"
 # --- Android Configuration ---
 export ANDROID_API_LEVEL="24"
 # Architectures to build
-export TARGET_ARCHS="arm arm64 x86_64"
+export TARGET_ARCHS="arm arm64 x86 x86_64"
 
 # --- Directories ---
 export BUILD_DIR="${PWD}/build"

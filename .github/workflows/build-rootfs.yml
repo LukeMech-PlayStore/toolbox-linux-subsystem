@@ -2,13 +2,12 @@ name: Build Alpine Rootfs
 
 on:
   schedule:
-    - cron: '0 2 * * *' # Daily at 02:00 UTC
+    - cron: '0 2 1,15 * *' # Twice a month (1st & 15th) at 02:00 UTC
   workflow_dispatch:
     inputs:
       alpine_version:
-        description: "Alpine version"
+        description: "Alpine version (empty = default below)"
         required: false
-        default: "3"
       force_release:
         description: "Force release even if no changes?"
         type: boolean
@@ -18,7 +17,8 @@ permissions:
   contents: write
 
 env:
-  DEFAULT_ALPINE_VERSION: "3"
+  # The only place the default Alpine version is set; manual runs can override it
+  ALPINE_VERSION: ${{ inputs.alpine_version || '3' }}
 
 jobs:
   # ------------------------------------------------------------------
@@ -68,18 +68,12 @@ jobs:
             platform: linux/arm64/v8
           - arch: arm
             platform: linux/arm/v7
+          - arch: x86
+            platform: linux/386
 
     steps:
       - name: Checkout
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
-
-      - name: Set Environment
-        run: |
-          if [ -n "${{ inputs.alpine_version }}" ]; then
-            echo "ALPINE_VERSION=${{ inputs.alpine_version }}" >> $GITHUB_ENV
-          else
-            echo "ALPINE_VERSION=${{ env.DEFAULT_ALPINE_VERSION }}" >> $GITHUB_ENV
-          fi
 
       - name: Set up QEMU
         uses: docker/setup-qemu-action@99012661954931238ded8c8b007157a8430204e1 # v4.4.0
@@ -145,6 +139,7 @@ jobs:
             
             # 4. Generate APK Manifest (Now clean of build deps)
             apk info -v | sort > /out/manifest-apk-${ARCH}.txt
+            cp /etc/alpine-release /out/alpine-release-${ARCH}.txt
             
             # Cleanup Caches
             rm -rf /var/cache/apk/* /usr/share/man /usr/share/doc /usr/share/locale /tmp/* /root/.cache
@@ -171,6 +166,7 @@ jobs:
             out/alpine-rootfs-${{ matrix.arch }}.tar.xz
             out/manifest-apk-${{ matrix.arch }}.txt
             out/manifest-pip-${{ matrix.arch }}.txt
+            out/alpine-release-${{ matrix.arch }}.txt
 
   # ------------------------------------------------------------------
   # JOB 3: Release & Compare
@@ -210,7 +206,7 @@ jobs:
             echo "is_initial=false" >> $GITHUB_OUTPUT
             
             # 2. Attempt to download manifests
-            for arch in x86_64 aarch64 arm; do
+            for arch in x86_64 aarch64 arm x86; do
               # APK
               if ! gh release download "$LATEST_TAG" -p "manifest-apk-${arch}.txt" -O "prev_assets/manifest-apk-${arch}.txt" 2>/dev/null; then
                  echo "No strict APK manifest found for $arch. Treating as new."
@@ -304,6 +300,7 @@ jobs:
           generate_rows x86_64
           generate_rows aarch64
           generate_rows arm
+          generate_rows x86
 
           FINAL_LOG=""
 
@@ -316,7 +313,7 @@ jobs:
             FINAL_LOG+="|:--:|:--------|:----|:-----|"$'\n'
             FINAL_LOG+=$(cat "rows/x86_64.txt")
             
-            for arch in aarch64 arm; do
+            for arch in aarch64 arm x86; do
               diff_out="rows/${arch}_specific.txt"
               comm -13 rows/x86_64.txt rows/${arch}.txt > "$diff_out"
               if [ -s "$diff_out" ]; then
@@ -354,9 +351,14 @@ jobs:
           package_arch "x86_64"  "x86_64"
           package_arch "aarch64" "arm64-v8a"
           package_arch "arm"      "armeabi-v7a"
+          package_arch "x86"      "x86"
 
           echo "==> Creating Master Archive..."
           tar -czf alpine-rootfs.tar.gz -C final_package .
+
+      - name: Read Alpine Release
+        id: alpine
+        run: echo "release=$(cat current_assets/alpine-release-x86_64.txt)" >> $GITHUB_OUTPUT
 
       - name: Push Release
         if: steps.changelog.outputs.needed == 'true'
@@ -366,7 +368,8 @@ jobs:
           name: Release ${{ needs.prepare.outputs.version }}
           body: |
               ## Automated Build ${{ needs.prepare.outputs.version }}
-              Base Alpine: ${{ env.DEFAULT_ALPINE_VERSION }}
+              Base Alpine: ${{ steps.alpine.outputs.release }}
+              ABIs: `armeabi-v7a`, `arm64-v8a`, `x86`, `x86_64`
               
               ${{ steps.changelog.outputs.full_log }}
           files: |

@@ -1,6 +1,11 @@
 name: Build PRoot
 
 on:
+  push:
+    branches: [main]
+    paths:
+      - 'proot/**'
+      - '.github/workflows/build-proot.yml'
   workflow_dispatch:
 
 permissions:
@@ -133,6 +138,7 @@ jobs:
              **Structure in tarball:**
              - `armeabi-v7a/`
              - `arm64-v8a/`
+             - `x86/`
              - `x86_64/`
              
              *Built using NDK ${{ env.NDK_VERSION }}.*
