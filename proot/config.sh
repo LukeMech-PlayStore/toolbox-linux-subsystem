@@ -9,12 +9,8 @@ export TALLOC_VERSION="2.5.0"
 export PROOT_REPO="termux/proot"
 export PROOT_REF="v5.1.107.96"
 
-# Termux ELF Cleaner (Used to fix linker warnings on older Androids)
-export ELF_CLEANER_REPO="termux/termux-elf-cleaner"
-export ELF_CLEANER_TAG="v3.0.1"
-
 # --- Android Configuration ---
-export ANDROID_API_LEVEL="24"
+export ANDROID_API_LEVEL="29" # Android 10
 # Architectures to build
 export TARGET_ARCHS="arm arm64 x86 x86_64"
 

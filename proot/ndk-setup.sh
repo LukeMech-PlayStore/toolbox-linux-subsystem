@@ -56,12 +56,8 @@ setup_ndk_env() {
     # Critical: cpufeatures needed for Node/V8 based stuff, beneficial for proot
     export CFLAGS="-I${ndk_home}/sources/android/cpufeatures -fPIC"
     
-    # Handle File Offset Bits
-    if [ "$api_level" -gt 16 ]; then
-        export FILE_OFFSET_BITS="OK"
-    else
-        export FILE_OFFSET_BITS="NO"
-    fi
+    # 64-bit off_t is available on every supported API level
+    export FILE_OFFSET_BITS="OK"
 
     echo " -> Configured env for: $target_arch (API $api_level)"
 }

@@ -44,35 +44,6 @@ prepare_sources() {
     fi
 }
 
-setup_host_tools() {
-    echo "==> Setting up Host Tools..."
-
-    local DEST_DIR="$SRC_DIR/termux-elf-cleaner"
-    local BINARY="$DEST_DIR/termux-elf-cleaner"
-
-    # Check if we already downloaded it
-    if [ -x "$BINARY" ]; then
-        echo " -> termux-elf-cleaner already exists."
-        return
-    fi
-
-    echo " -> Downloading termux-elf-cleaner binary ($ELF_CLEANER_TAG)..."
-
-    mkdir -p "$DEST_DIR"
-
-    # URL format for the binary release
-    local URL="https://github.com/${ELF_CLEANER_REPO}/releases/download/${ELF_CLEANER_TAG}/termux-elf-cleaner"
-
-    curl -L -f -o "$BINARY" "$URL" || {
-        echo "Error: Failed to download termux-elf-cleaner binary from:"
-        echo "  $URL"
-        exit 1
-    }
-
-    chmod +x "$BINARY"
-    echo " -> Download complete."
-}
-
 generate_talloc_answers() {
     local file=$1
     cat <<EOF > "$file"
@@ -154,24 +125,7 @@ build_arch() {
     # GIT=false: don't let the version check describe this repository instead of proot
     make -j$(nproc) V=1 GIT=false proot > /dev/null
 
-    # 4. Clean ELF Header (Fixes Android 7 linker warnings)
-    echo " -> Running termux-elf-cleaner..."
-
-    # Check if tool exists
-    if [ ! -x "$SRC_DIR/termux-elf-cleaner/termux-elf-cleaner" ]; then
-        echo "Error: Host tool termux-elf-cleaner not found!"
-        echo "It should have been downloaded by setup_host_tools."
-        exit 1
-    fi
-
-    "$SRC_DIR/termux-elf-cleaner/termux-elf-cleaner" \
-        --api-level "$ANDROID_API_LEVEL" \
-        ./proot || {
-            echo "Error: termux-elf-cleaner failed"
-            exit 1
-        }
-
-    # 5. Packaging
+    # 4. Packaging
     local ABI_DIR="$ARCH"
     if [ "$ARCH" == "arm64" ]; then ABI_DIR="arm64-v8a"; fi
     if [ "$ARCH" == "arm" ]; then ABI_DIR="armeabi-v7a"; fi
@@ -187,7 +141,7 @@ build_arch() {
         cp ./loader/loader-m32 "$FINAL_OUT/libproot-loader32.so"
     fi
 
-    # 6. Strip Binaries
+    # 5. Strip Binaries
     echo " -> Stripping binaries..."
     find "$FINAL_OUT" -type f -exec "$STRIP" --strip-unneeded {} \;
 
@@ -199,7 +153,6 @@ build_arch() {
 # --- Main Execution ---
 
 prepare_sources
-setup_host_tools
 
 for ARCH in $TARGET_ARCHS; do
     build_arch "$ARCH"
