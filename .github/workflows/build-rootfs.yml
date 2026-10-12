@@ -30,7 +30,7 @@ jobs:
       version: ${{ steps.calc_ver.outputs.version }}
     steps:
       - name: Checkout
-        uses: actions/checkout@v5
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           fetch-depth: 0
 
@@ -71,7 +71,7 @@ jobs:
 
     steps:
       - name: Checkout
-        uses: actions/checkout@v5
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
 
       - name: Set Environment
         run: |
@@ -82,7 +82,7 @@ jobs:
           fi
 
       - name: Set up QEMU
-        uses: docker/setup-qemu-action@v3
+        uses: docker/setup-qemu-action@99012661954931238ded8c8b007157a8430204e1 # v4.4.0
 
       - name: Build Rootfs
         env:
@@ -148,13 +148,13 @@ jobs:
             
             # Cleanup Caches
             rm -rf /var/cache/apk/* /usr/share/man /usr/share/doc /usr/share/locale /tmp/* /root/.cache
-            find /usr/lib/python* -name "__pycache__" -type d -exec rm -rf "{}" +
-            find /usr/lib/python* -name "*.pyc" -type f -delete
-            find /usr/lib/python* -name "*.pyo" -type f -delete
-            rm -rf /usr/lib/python*/test \
-                   /usr/lib/python*/ensurepip \
-                   /usr/lib/python*/idlelib \
-                   /usr/lib/python*/pydoc_data
+            # Python cleanup (only when config.yaml pulls in python)
+            for py in /usr/lib/python*; do
+              [ -d \"\$py\" ] || continue
+              find \"\$py\" -name \"__pycache__\" -type d -exec rm -rf {} +
+              find \"\$py\" \\( -name \"*.pyc\" -o -name \"*.pyo\" \\) -type f -delete
+              rm -rf \"\$py/test\" \"\$py/ensurepip\" \"\$py/idlelib\" \"\$py/pydoc_data\"
+            done
             rm -rf /usr/share/perl5/core_perl/pod
              rm -rf /usr/include /usr/lib/*.a 
              
@@ -164,7 +164,7 @@ jobs:
           docker export rootfs | xz -9e -c > "out/alpine-rootfs-${ARCH}.tar.xz"
 
       - name: Upload Artifacts
-        uses: actions/upload-artifact@v5
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
         with:
           name: build-data-${{ matrix.arch }}
           path: |
@@ -181,10 +181,10 @@ jobs:
     steps:
 
       - name: Checkout
-        uses: actions/checkout@v5
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
 
       - name: Download Current Build Artifacts
-        uses: actions/download-artifact@v6
+        uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
         with:
           pattern: build-data-*
           path: current_assets
@@ -360,7 +360,7 @@ jobs:
 
       - name: Push Release
         if: steps.changelog.outputs.needed == 'true'
-        uses: softprops/action-gh-release@v2
+        uses: softprops/action-gh-release@efb35369e0ad2afab669f228072c1b0d510eae64 # v3.0.3
         with:
           tag_name: ${{ needs.prepare.outputs.version }}
           name: Release ${{ needs.prepare.outputs.version }}

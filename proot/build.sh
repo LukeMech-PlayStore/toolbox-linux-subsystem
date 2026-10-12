@@ -14,25 +14,30 @@ prepare_sources() {
     # 1. Download Talloc
     if [ ! -d "$SRC_DIR/talloc-$TALLOC_VERSION" ]; then
         echo " -> Downloading Talloc $TALLOC_VERSION..."
-        curl -L -o "$SRC_DIR/talloc.tar.gz" "https://www.samba.org/ftp/talloc/talloc-$TALLOC_VERSION.tar.gz"
+        curl -L -f -o "$SRC_DIR/talloc.tar.gz" "https://www.samba.org/ftp/talloc/talloc-$TALLOC_VERSION.tar.gz"
         tar -xzf "$SRC_DIR/talloc.tar.gz" -C "$SRC_DIR"
         rm "$SRC_DIR/talloc.tar.gz"
     fi
 
-    # 2. Download Proot
+    # 2. Download Proot (tarball, so there is no .git for its version check to pick up)
     if [ ! -d "$SRC_DIR/proot" ]; then
-        echo " -> Cloning Proot ($PROOT_REF)..."
-        git clone https://github.com/termux/proot.git "$SRC_DIR/proot"
+        echo " -> Downloading Proot ($PROOT_REF)..."
+        mkdir -p "$SRC_DIR/proot"
+        curl -L -f -o "$SRC_DIR/proot.tar.gz" "https://github.com/${PROOT_REPO}/archive/${PROOT_REF}.tar.gz"
+        tar -xzf "$SRC_DIR/proot.tar.gz" -C "$SRC_DIR/proot" --strip-components=1
+        rm "$SRC_DIR/proot.tar.gz"
         cd "$SRC_DIR/proot"
-        git checkout "$PROOT_REF"
-        
+
         # Apply Patches
         if [ -d "$PATCH_DIR" ]; then
             echo " -> Applying patches..."
             for patch in "$PATCH_DIR"/*.patch; do
                 [ -f "$patch" ] || continue
                 echo "   Applying $(basename "$patch")"
-                patch -p1 < "$patch" || echo "Warning: Failed to apply $patch (maybe already applied?)"
+                patch -p1 --forward < "$patch" || {
+                    echo "Error: Failed to apply $(basename "$patch") to proot $PROOT_REF"
+                    exit 1
+                }
             done
         fi
         cd - > /dev/null
@@ -41,7 +46,7 @@ prepare_sources() {
 
 setup_host_tools() {
     echo "==> Setting up Host Tools..."
-    
+
     local DEST_DIR="$SRC_DIR/termux-elf-cleaner"
     local BINARY="$DEST_DIR/termux-elf-cleaner"
 
@@ -52,12 +57,12 @@ setup_host_tools() {
     fi
 
     echo " -> Downloading termux-elf-cleaner binary ($ELF_CLEANER_TAG)..."
-    
+
     mkdir -p "$DEST_DIR"
-    
+
     # URL format for the binary release
     local URL="https://github.com/${ELF_CLEANER_REPO}/releases/download/${ELF_CLEANER_TAG}/termux-elf-cleaner"
-    
+
     curl -L -f -o "$BINARY" "$URL" || {
         echo "Error: Failed to download termux-elf-cleaner binary from:"
         echo "  $URL"
@@ -94,43 +99,6 @@ Checking for HAVE_IFACE_IFCONF: FAIL
 EOF
 }
 
-download_loader() {
-    local ARCH=$1
-    local DEST_DIR=$2
-
-    # Parse LOADER_TAG (Format: TAG::VERSION)
-    local TAG="${LOADER_TAG%%::*}"
-    local VER="${LOADER_TAG##*::}"
-
-    # --- Normalize Architecture Name ---
-    local LOADER_ARCH="$ARCH"
-    if [ "$ARCH" == "arm64" ]; then LOADER_ARCH="aarch64"; fi
-
-    # --- 1. Download Main Loader ---
-    local ASSET_NAME="libproot-loader-${LOADER_ARCH}-${VER}.so"
-    local URL="https://github.com/${LOADER_REPO}/releases/download/${TAG}/${ASSET_NAME}"
-
-    echo " -> Downloading Main Loader ($LOADER_ARCH)..."
-    curl -L -f -o "${DEST_DIR}/libproot-loader.so" "$URL" || {
-        echo "Error: Failed to download loader from $URL"
-        exit 1
-    }
-    
-    # --- 2. Download 32-bit Loader (Only for 64-bit archs) ---
-    if [ "$ARCH" == "arm64" ] || [ "$ARCH" == "x86_64" ]; then
-        local ASSET_NAME_32="libproot-loader32-${LOADER_ARCH}-${VER}.so"
-        local URL_32="https://github.com/${LOADER_REPO}/releases/download/${TAG}/${ASSET_NAME_32}"
-
-        echo " -> Downloading 32-bit Loader (loader32 for $LOADER_ARCH)..."
-        curl -L -f -o "${DEST_DIR}/libproot-loader32.so" "$URL_32" || {
-             echo "Error: Failed to download 32-bit loader from $URL_32"
-             exit 1
-        }
-    else
-        echo " -> Skipping 32-bit loader (not required for $ARCH)"
-    fi
-}
-
 build_arch() {
     local ARCH=$1
     echo "==> Building for Architecture: $ARCH"
@@ -138,11 +106,10 @@ build_arch() {
     # Define paths for this arch
     local ARCH_BUILD_DIR="$BUILD_DIR/$ARCH"
     local STATIC_ROOT="$ARCH_BUILD_DIR/static-root"
-    local INSTALL_ROOT="$ARCH_BUILD_DIR/install"
-    
+
     # Clean build dirs
     rm -rf "$ARCH_BUILD_DIR"
-    mkdir -p "$STATIC_ROOT" "$INSTALL_ROOT"
+    mkdir -p "$STATIC_ROOT"
 
     # 1. Setup Environment
     setup_ndk_env "$ARCH" "$ANDROID_API_LEVEL" "$ANDROID_NDK_HOME"
@@ -150,44 +117,46 @@ build_arch() {
     # 2. Build Talloc (Static)
     echo " -> Building Talloc..."
     cd "$SRC_DIR/talloc-$TALLOC_VERSION"
-    
+
     generate_talloc_answers "cross-answers-$ARCH.txt"
     make distclean >/dev/null 2>&1 || true
 
     ./configure build \
-        --prefix="$INSTALL_ROOT" \
+        --prefix="$STATIC_ROOT" \
         --disable-rpath \
         --disable-python \
         --cross-compile \
         --cross-answers="cross-answers-$ARCH.txt" > /dev/null
 
     make -j$(nproc)
-    
+
     mkdir -p "$STATIC_ROOT/include" "$STATIC_ROOT/lib"
-    ar rcs "$STATIC_ROOT/lib/libtalloc.a" bin/default/talloc*.o
+    # Talloc >= 2.4.4 calls libreplace helpers (e.g. rep_memset_explicit). The waf build
+    # links libreplace into libtalloc.so, so archive its objects alongside talloc's.
+    "$AR" rcs "$STATIC_ROOT/lib/libtalloc.a" bin/default/talloc*.o bin/default/lib/replace/*.o
     cp -f talloc.h "$STATIC_ROOT/include"
-    
-    # 3. Build Proot
+
+    # 3. Build Proot and its loaders (the loaders are built from the same source, so
+    #    LOADER_ADDRESS and the proot <-> loader protocol always match)
     echo " -> Building Proot..."
     cd "$SRC_DIR/proot/src"
     make distclean >/dev/null 2>&1 || true
 
-    export CFLAGS="-I$STATIC_ROOT/include -Werror=implicit-function-declaration"      
+    export CFLAGS="-I$STATIC_ROOT/include -Werror=implicit-function-declaration"
+    CFLAGS+=" -DVERSION=\\\"${PROOT_REF#v}\\\""
+    CFLAGS+=" -DPROOT_UNBUNDLE_LOADER_NAME=\\\"libproot-loader.so\\\""
+    CFLAGS+=" -DPROOT_UNBUNDLE_LOADER_NAME_32=\\\"libproot-loader32.so\\\""
     export LDFLAGS="-L$STATIC_ROOT/lib -Wl,-z,max-page-size=16384"
-    
-    export PROOT_UNBUNDLE_LOADER='.'
-    export PROOT_UNBUNDLE_LOADER_NAME='libproot-loader.so'
-    export PROOT_UNBUNDLE_LOADER_NAME_32='libproot-loader32.so'
 
-    make -j$(nproc) V=1 "PREFIX=$INSTALL_ROOT" install > /dev/null
-    
-    # Copy binary to install location
-    cp -a ./proot "$INSTALL_ROOT/bin/proot"
-    make distclean >/dev/null 2>&1 || true
+    # Relative: resolved against the directory of the proot binary (the app's nativeLibraryDir)
+    export PROOT_UNBUNDLE_LOADER='.'
+
+    # GIT=false: don't let the version check describe this repository instead of proot
+    make -j$(nproc) V=1 GIT=false proot > /dev/null
 
     # 4. Clean ELF Header (Fixes Android 7 linker warnings)
     echo " -> Running termux-elf-cleaner..."
-    
+
     # Check if tool exists
     if [ ! -x "$SRC_DIR/termux-elf-cleaner/termux-elf-cleaner" ]; then
         echo "Error: Host tool termux-elf-cleaner not found!"
@@ -197,28 +166,33 @@ build_arch() {
 
     "$SRC_DIR/termux-elf-cleaner/termux-elf-cleaner" \
         --api-level "$ANDROID_API_LEVEL" \
-        "$INSTALL_ROOT/bin/proot" || {
+        ./proot || {
             echo "Error: termux-elf-cleaner failed"
             exit 1
         }
 
-    # 5. Strip Binaries
-    echo " -> Stripping binaries..."
-    find "$INSTALL_ROOT/bin" -type f -exec "$STRIP" --strip-unneeded {} \; 2>/dev/null || true
-
-    # 6. Packaging
+    # 5. Packaging
     local ABI_DIR="$ARCH"
     if [ "$ARCH" == "arm64" ]; then ABI_DIR="arm64-v8a"; fi
     if [ "$ARCH" == "arm" ]; then ABI_DIR="armeabi-v7a"; fi
-    
+
     local FINAL_OUT="$OUT_DIR/$ABI_DIR"
     rm -rf "$FINAL_OUT"
     mkdir -p "$FINAL_OUT"
-    
+
     echo " -> Packaging artifacts into $ABI_DIR..."
-    cp "$INSTALL_ROOT/bin/proot" "$FINAL_OUT/libproot.so"
-    download_loader "$ARCH" "$FINAL_OUT"
-    
+    cp ./proot "$FINAL_OUT/libproot.so"
+    cp ./loader/loader "$FINAL_OUT/libproot-loader.so"
+    if [ -f ./loader/loader-m32 ]; then
+        cp ./loader/loader-m32 "$FINAL_OUT/libproot-loader32.so"
+    fi
+
+    # 6. Strip Binaries
+    echo " -> Stripping binaries..."
+    find "$FINAL_OUT" -type f -exec "$STRIP" --strip-unneeded {} \;
+
+    make distclean >/dev/null 2>&1 || true
+
     echo "==> Finished $ARCH"
 }
 

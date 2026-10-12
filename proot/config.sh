@@ -2,14 +2,12 @@
 
 # --- Sources ---
 # Talloc Version
-export TALLOC_VERSION="2.4.3"
+export TALLOC_VERSION="2.5.0"
 
-# Proot: Can be a branch name (master) or a specific Commit Hash
-export PROOT_REF="master"
-
-# Termux Loader Tag (from termux-play-store/termux-packages)
-export LOADER_REPO="termux-play-store/termux-packages"
-export LOADER_TAG="proot-2026.01.04-r1::5.1.107-68"
+# Proot: Can be a tag, a branch name (master) or a specific Commit Hash.
+# The loaders are built from the same source, so they always match.
+export PROOT_REPO="termux/proot"
+export PROOT_REF="v5.1.107.96"
 
 # Termux ELF Cleaner (Used to fix linker warnings on older Androids)
 export ELF_CLEANER_REPO="termux/termux-elf-cleaner"

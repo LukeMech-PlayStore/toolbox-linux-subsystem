@@ -1,0 +1,11 @@
+# https://docs.github.com/github/administering-a-repository/configuration-options-for-dependency-updates
+#
+# github-actions keeps `uses:` SHA pins current. proot/talloc versions live in
+# proot/config.sh, which dependabot can't track -- bump those by hand.
+
+version: 2
+updates:
+  - package-ecosystem: "github-actions"
+    directory: "/"
+    schedule:
+      interval: "weekly"
