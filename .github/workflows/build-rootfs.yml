@@ -2,7 +2,7 @@ name: Build Termux Rootfs
 
 on:
   schedule:
-    - cron: '0 2 1,15 * *' # Twice a month (1st & 15th) at 02:00 UTC
+    - cron: '0 2 1 * *' # Once a month (1st) at 02:00 UTC
   workflow_dispatch:
     inputs:
       force_release:
