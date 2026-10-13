@@ -108,11 +108,17 @@ if grep -qx 'lib/libandroid-utimes.so' "$WORK/files"; then
   fi
 fi
 
-# Termux scripts run through $PREFIX/bin/env (or sh), which come with the bootstrap, not as
-# dependencies; Android's own ones do the job
-for tool in env sh; do
-  [ -e "$STAGE/usr/bin/$tool" ] || ln -s "/system/bin/$tool" "$STAGE/usr/bin/$tool"
+# Termux scripts start with $PREFIX/bin/env (e.g. exiftool) and tools call $PREFIX/bin/sh; both
+# come with the bootstrap, not as dependencies. Android's own can't stand in: on some devices
+# (Samsung) proot can't execute anything from /system/bin (EPERM). So scripts get their
+# interpreter directly, like termux-fix-shebang does, and sh is dash (see config.yaml).
+find "$STAGE/usr/bin" -type f | while IFS= read -r f; do
+  head -n1 "$f" | grep -q "^#!$PREFIX/bin/env " || continue
+  sed -i "1s|^#!$PREFIX/bin/env *|#!$PREFIX/bin/|" "$f"
+  interpreter=$(head -n1 "$f" | sed 's|^#!||; s| .*||')
+  [ -e "$STAGE/usr${interpreter#"$PREFIX"}" ] || { echo "::error::${f#"$STAGE/"} runs $interpreter, which isn't in the rootfs"; exit 1; }
 done
+[ -e "$STAGE/usr/bin/sh" ] || ln -s dash "$STAGE/usr/bin/sh"
 
 mkdir -p "$STAGE/etc" "$STAGE/root" "$STAGE/tmp" "$STAGE/usr/tmp"
 echo "$IMAGE_VERSION" > "$STAGE/etc/image-version"

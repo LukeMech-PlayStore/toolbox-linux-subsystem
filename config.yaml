@@ -8,6 +8,7 @@ packages:
   # --- END_DEPEND #1 ---
 
   - python
+  - dash # $PREFIX/bin/sh for anything shelling out (Android's sh can't run under proot on Samsung)
 pip:
   - qrcode[pil]        # QR Code generator
   - CurrencyConverter  # Currency converter
