@@ -21,6 +21,7 @@ Patches in `proot/patches/`:
 - `proot-loader-path.patch` - loader names are configurable and a relative loader path is resolved next to the proot binary (the app's `nativeLibraryDir`)
 - `proot-tmpdir.patch` - fall back to `$TMPDIR` when `PROOT_TMP_DIR` is unset
 - `proot-ashmem-include-string.patch` - missing `<string.h>` include (same as Termux)
+- `proot-loader-16k-pages.patch` - loaders are linked for 16 KB pages too (they don't get `LDFLAGS`; the NDK only defaults to it for 64-bit ABIs)
 
 To update, bump `PROOT_REF` / `TALLOC_VERSION` in `proot/config.sh` (and `NDK_VERSION` in the workflow); a patch that no longer applies fails the build.
 

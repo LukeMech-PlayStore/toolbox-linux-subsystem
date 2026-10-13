@@ -145,6 +145,18 @@ build_arch() {
     echo " -> Stripping binaries..."
     find "$FINAL_OUT" -type f -exec "$STRIP" --strip-unneeded {} \;
 
+    # 6. Every native lib must load with 16 KB pages (Play requirement), 32-bit ones included
+    echo " -> Checking 16 KB alignment..."
+    local f align
+    for f in "$FINAL_OUT"/*.so; do
+        for align in $("$(dirname "$STRIP")/llvm-readelf" -lW "$f" | awk '$1 == "LOAD" { print $NF }'); do
+            if (( align < 16384 )); then
+                echo "Error: $(basename "$f") ($ABI_DIR) has a LOAD segment aligned to $align"
+                exit 1
+            fi
+        done
+    done
+
     make distclean >/dev/null 2>&1 || true
 
     echo "==> Finished $ARCH"

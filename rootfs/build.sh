@@ -64,6 +64,17 @@ xargs dpkg-query -W -f='${Package}-${Version}\n' < "$WORK/closure" | sort > "$OU
 
 tar -C "$PREFIX" --no-recursion -cf - -T "$WORK/files" | tar -C "$STAGE/usr" -xf -
 
+# Termux packages still linked for 4 KB pages, rebuilt from the same source.
+# Drop an entry once Termux ships it aligned (the workflow's 16 KB check tells).
+if grep -qx 'lib/libandroid-utimes.so' "$WORK/files"; then
+  apt-get install -y clang curl
+  curl -fsSL -o "$WORK/utimes.tar.gz" https://github.com/termux/libandroid-utimes/archive/refs/tags/v0.4.tar.gz
+  echo "579dd000d084e2647d7b907d3c4ef2c46c8cda703e371ed1df32f4dd0366e25d  $WORK/utimes.tar.gz" | sha256sum -c -
+  tar -xzf "$WORK/utimes.tar.gz" -C "$WORK"
+  clang -fPIC -shared -Wl,-z,max-page-size=16384 "$WORK/libandroid-utimes-0.4/sys_time.c" \
+    -o "$STAGE/usr/lib/libandroid-utimes.so"
+fi
+
 mkdir -p "$STAGE/etc" "$STAGE/root" "$STAGE/tmp" "$STAGE/usr/tmp"
 echo "$IMAGE_VERSION" > "$STAGE/etc/image-version"
 
