@@ -50,31 +50,33 @@ jobs:
   build:
     name: Build ${{ matrix.arch }}
     needs: prepare
-    runs-on: ubuntu-latest
+    # Every image runs natively: x86 ones on x86_64 runners, ARM ones on ARM runners
+    runs-on: ${{ matrix.runner }}
     strategy:
       fail-fast: false
       matrix:
         include:
           - arch: x86_64
             image: x86_64
+            runner: ubuntu-latest
             check_16k: true
           - arch: aarch64
             image: aarch64
+            runner: ubuntu-24.04-arm
             check_16k: true
           # 32-bit ABIs never run with 16 KB pages
           - arch: arm
             image: arm
+            runner: ubuntu-24.04-arm
             check_16k: false
           - arch: x86
             image: i686
+            runner: ubuntu-latest
             check_16k: false
 
     steps:
       - name: Checkout
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
-
-      - name: Set up QEMU
-        uses: docker/setup-qemu-action@99012661954931238ded8c8b007157a8430204e1 # v4.4.0
 
       - name: Build Rootfs
         env:
@@ -92,7 +94,7 @@ jobs:
             exit 1
           fi
 
-          # Privileged: ARM images under QEMU need personality() (see termux-docker's README)
+          # Privileged: ARM images need personality(), even on ARM hosts (see termux-docker's README)
           docker run --privileged --name rootfs -v "$PWD/rootfs:/build:ro" "$IMAGE" \
             bash /build/build.sh "$IMAGE_VERSION" "$PKGS" "$BUILD_PKGS" "$PIP_ARGS"
 
