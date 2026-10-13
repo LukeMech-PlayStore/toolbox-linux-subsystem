@@ -1,13 +1,10 @@
-name: Build Alpine Rootfs
+name: Build Termux Rootfs
 
 on:
   schedule:
     - cron: '0 2 1,15 * *' # Twice a month (1st & 15th) at 02:00 UTC
   workflow_dispatch:
     inputs:
-      alpine_version:
-        description: "Alpine version (empty = default below)"
-        required: false
       force_release:
         description: "Force release even if no changes?"
         type: boolean
@@ -15,10 +12,6 @@ on:
 
 permissions:
   contents: write
-
-env:
-  # The only place the default Alpine version is set; manual runs can override it
-  ALPINE_VERSION: ${{ inputs.alpine_version || '3' }}
 
 jobs:
   # ------------------------------------------------------------------
@@ -63,13 +56,18 @@ jobs:
       matrix:
         include:
           - arch: x86_64
-            platform: linux/amd64
+            image: x86_64
+            check_16k: true
           - arch: aarch64
-            platform: linux/arm64/v8
+            image: aarch64
+            check_16k: true
+          # 32-bit ABIs never run with 16 KB pages
           - arch: arm
-            platform: linux/arm/v7
+            image: arm
+            check_16k: false
           - arch: x86
-            platform: linux/386
+            image: i686
+            check_16k: false
 
     steps:
       - name: Checkout
@@ -80,93 +78,57 @@ jobs:
 
       - name: Build Rootfs
         env:
-          PLATFORM: ${{ matrix.platform }}
-          ARCH: ${{ matrix.arch }}
+          IMAGE: termux/termux-docker:${{ matrix.image }}
           IMAGE_VERSION: ${{ needs.prepare.outputs.version }}
         run: |
           mkdir -p out
-            
+
           if [ -f config.yaml ]; then
-            APK_PKGS=$(yq -r '.apk[] // ""' config.yaml | tr '\n' ' ')
-            # Parse build dependencies
-            APK_BUILD_PKGS=$(yq -r '.apk_build[] // ""' config.yaml | tr '\n' ' ')
-            PIP_PKGS=$(yq -r '.pip[] // ""' config.yaml | tr '\n' ' ')
+            PKGS=$(yq -r '(.packages // [])[]' config.yaml | tr '\n' ' ')
+            BUILD_PKGS=$(yq -r '(.build_packages // [])[]' config.yaml | tr '\n' ' ')
+            PIP_ARGS=$(yq -r '(.pip // [])[]' config.yaml | tr '\n' ' ')
           else
             echo "No config.yaml found!"
             exit 1
           fi
 
-          # We explicitly sort the manifests inside the container to ensure determinism
-          docker run --platform "$PLATFORM" \
-            -e APK_PKGS="$APK_PKGS" \
-            -e APK_BUILD_PKGS="$APK_BUILD_PKGS" \
-            -e PIP_PKGS="$PIP_PKGS" \
-            -v $(pwd)/out:/out \
-            --name rootfs alpine:"${ALPINE_VERSION}" sh -euxc "
-            
-            apk -U upgrade --no-cache
-            
-            # 0. Install Custom Build Dependencies (Virtual Tag for easy removal)
-            # We install these FIRST so they are available for any pip builds
-            if [ -n \"\$APK_BUILD_PKGS\" ]; then 
-              apk add --no-cache --virtual .custom-build-deps \$APK_BUILD_PKGS
-            fi
+          # Privileged: ARM images under QEMU need personality() (see termux-docker's README)
+          docker run --privileged --name rootfs -v "$PWD/rootfs:/build:ro" "$IMAGE" \
+            bash /build/build.sh "$IMAGE_VERSION" "$PKGS" "$BUILD_PKGS" "$PIP_ARGS"
 
-            # 1. Install User Runtime APK Packages
-            if [ -n \"\$APK_PKGS\" ]; then 
-              apk add --no-cache \$APK_PKGS
-            fi
-            
-            # 2. Handle PIP Packages
-            if [ -n \"\$PIP_PKGS\" ]; then              
-              # Install user pip packages (might rely on .custom-build-deps installed in Step 0)
-              pip install --no-cache-dir --break-system-packages \$PIP_PKGS
-              
-              # Manifest PIP (Before cleanup)
-              pip freeze | sort > /out/manifest-pip-${ARCH}.txt
-            else
-              touch /out/manifest-pip-${ARCH}.txt
-            fi
+          HOME_DIR=/data/data/com.termux/files/home
+          docker cp "rootfs:$HOME_DIR/rootfs" stage
+          docker cp "rootfs:$HOME_DIR/out/manifest-pkg.txt" "out/manifest-pkg-${{ matrix.arch }}.txt"
+          docker cp "rootfs:$HOME_DIR/out/manifest-pip.txt" "out/manifest-pip-${{ matrix.arch }}.txt"
+          docker rm rootfs
 
-            # 3. Cleanup Custom Build Dependencies
-            # We remove these BEFORE generating the APK manifest so they don't appear in the logs
-            if [ -n \"\$APK_BUILD_PKGS\" ]; then
-              apk del .custom-build-deps
-            fi
-            
-            echo \"$IMAGE_VERSION\" > /etc/image-version
-            chmod 644 /etc/image-version
-            
-            # 4. Generate APK Manifest (Now clean of build deps)
-            apk info -v | sort > /out/manifest-apk-${ARCH}.txt
-            cp /etc/alpine-release /out/alpine-release-${ARCH}.txt
-            
-            # Cleanup Caches
-            rm -rf /var/cache/apk/* /usr/share/man /usr/share/doc /usr/share/locale /tmp/* /root/.cache
-            # Python cleanup (only when config.yaml pulls in python)
-            for py in /usr/lib/python*; do
-              [ -d \"\$py\" ] || continue
-              find \"\$py\" -name \"__pycache__\" -type d -exec rm -rf {} +
-              find \"\$py\" \\( -name \"*.pyc\" -o -name \"*.pyo\" \\) -type f -delete
-              rm -rf \"\$py/test\" \"\$py/ensurepip\" \"\$py/idlelib\" \"\$py/pydoc_data\"
+          tar --owner=0 --group=0 --numeric-owner -cf - -C stage . | xz -9e -T0 -c > "out/rootfs-${{ matrix.arch }}.tar.xz"
+          du -sh stage "out/rootfs-${{ matrix.arch }}.tar.xz"
+
+      - name: Check 16 KB Alignment
+        if: matrix.check_16k
+        run: |
+          # Every ELF must load with 16 KB pages (Android 15+ devices and Android 17 emulators)
+          bad=0
+          while IFS= read -r -d '' f; do
+            for align in $(readelf -lW "$f" 2>/dev/null | awk '$1 == "LOAD" { print $NF }'); do
+              if (( align < 16384 )); then
+                echo "::error::${f#stage/}: LOAD segment aligned to $align"
+                bad=1
+                break
+              fi
             done
-            rm -rf /usr/share/perl5/core_perl/pod
-             rm -rf /usr/include /usr/lib/*.a 
-             
-            mkdir -p /proc /sys /dev
-          "
-            
-          docker export rootfs | xz -9e -c > "out/alpine-rootfs-${ARCH}.tar.xz"
+          done < <(find stage -type f -size +0 -print0)
+          exit $bad
 
       - name: Upload Artifacts
         uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
         with:
           name: build-data-${{ matrix.arch }}
           path: |
-            out/alpine-rootfs-${{ matrix.arch }}.tar.xz
-            out/manifest-apk-${{ matrix.arch }}.txt
+            out/rootfs-${{ matrix.arch }}.tar.xz
+            out/manifest-pkg-${{ matrix.arch }}.txt
             out/manifest-pip-${{ matrix.arch }}.txt
-            out/alpine-release-${{ matrix.arch }}.txt
 
   # ------------------------------------------------------------------
   # JOB 3: Release & Compare
@@ -207,10 +169,10 @@ jobs:
             
             # 2. Attempt to download manifests
             for arch in x86_64 aarch64 arm x86; do
-              # APK
-              if ! gh release download "$LATEST_TAG" -p "manifest-apk-${arch}.txt" -O "prev_assets/manifest-apk-${arch}.txt" 2>/dev/null; then
-                 echo "No strict APK manifest found for $arch. Treating as new."
-                 touch "prev_assets/manifest-apk-${arch}.txt"
+              # Termux packages
+              if ! gh release download "$LATEST_TAG" -p "manifest-pkg-${arch}.txt" -O "prev_assets/manifest-pkg-${arch}.txt" 2>/dev/null; then
+                 echo "No package manifest found for $arch. Treating as new."
+                 touch "prev_assets/manifest-pkg-${arch}.txt"
               fi
 
               # PIP
@@ -226,7 +188,7 @@ jobs:
           mkdir -p rows
           CHANGES_DETECTED="false"
 
-          parse_apk_line() {
+          parse_pkg_line() {
             local line="$1"
             pkg="${line%%-[0-9]*}"
             ver="${line#${pkg}-}"
@@ -245,8 +207,8 @@ jobs:
             local outfile="rows/${arch}.txt"
             touch "$outfile"
 
-            cat "prev_assets/manifest-apk-${arch}.txt" "prev_assets/manifest-pip-${arch}.txt" > combined_old.txt
-            cat "current_assets/manifest-apk-${arch}.txt" "current_assets/manifest-pip-${arch}.txt" > combined_new.txt
+            cat "prev_assets/manifest-pkg-${arch}.txt" "prev_assets/manifest-pip-${arch}.txt" > combined_old.txt
+            cat "current_assets/manifest-pkg-${arch}.txt" "current_assets/manifest-pip-${arch}.txt" > combined_new.txt
 
             declare -A OLD NEW
 
@@ -256,7 +218,7 @@ jobs:
               if [[ "$line" == *==* ]]; then
                 read pkg ver <<<"$(parse_pip_line "$line")"
               else
-                read pkg ver <<<"$(parse_apk_line "$line")"
+                read pkg ver <<<"$(parse_pkg_line "$line")"
               fi
               OLD["$pkg"]="$ver"
             done < combined_old.txt
@@ -267,7 +229,7 @@ jobs:
               if [[ "$line" == *==* ]]; then
                 read pkg ver <<<"$(parse_pip_line "$line")"
               else
-                read pkg ver <<<"$(parse_apk_line "$line")"
+                read pkg ver <<<"$(parse_pkg_line "$line")"
               fi
               NEW["$pkg"]="$ver"
             done < combined_new.txt
@@ -342,9 +304,9 @@ jobs:
             local SRC_ARCH=$1
             local DEST_DIR=$2
             mkdir -p "final_package/$DEST_DIR"
-            if [ -f "current_assets/alpine-rootfs-${SRC_ARCH}.tar.xz" ]; then
-              mv "current_assets/alpine-rootfs-${SRC_ARCH}.tar.xz" \
-                  "final_package/$DEST_DIR/libalpine-rootfs.tar.xz.so"
+            if [ -f "current_assets/rootfs-${SRC_ARCH}.tar.xz" ]; then
+              mv "current_assets/rootfs-${SRC_ARCH}.tar.xz" \
+                  "final_package/$DEST_DIR/librootfs.tar.xz.so"
             fi
           }
 
@@ -354,11 +316,7 @@ jobs:
           package_arch "x86"      "x86"
 
           echo "==> Creating Master Archive..."
-          tar -czf alpine-rootfs.tar.gz -C final_package .
-
-      - name: Read Alpine Release
-        id: alpine
-        run: echo "release=$(cat current_assets/alpine-release-x86_64.txt)" >> $GITHUB_OUTPUT
+          tar -czf rootfs.tar.gz -C final_package .
 
       - name: Push Release
         if: steps.changelog.outputs.needed == 'true'
@@ -368,11 +326,11 @@ jobs:
           name: Release ${{ needs.prepare.outputs.version }}
           body: |
               ## Automated Build ${{ needs.prepare.outputs.version }}
-              Base Alpine: ${{ steps.alpine.outputs.release }}
+              Base: [Termux packages](https://github.com/termux/termux-packages)
               ABIs: `armeabi-v7a`, `arm64-v8a`, `x86`, `x86_64`
               
               ${{ steps.changelog.outputs.full_log }}
           files: |
-            alpine-rootfs.tar.gz
+            rootfs.tar.gz
             current_assets/manifest-*.txt
           make_latest: true

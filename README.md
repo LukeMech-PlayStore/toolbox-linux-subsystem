@@ -1,13 +1,17 @@
 # What's that?
 
 It's Linux subsystem and proot builder.
-Builds alpine-based subsystem with packages from `config.yaml` (and auto-updates) and also proot (based on versions specified in `proot/config.sh`). All the generated files are ready-to-paste into jniLibs in Android Studio app project.
+Builds a Termux-based subsystem with packages from `config.yaml` (and auto-updates) and also proot (based on versions specified in `proot/config.sh`). All the generated files are ready-to-paste into jniLibs in Android Studio app project.
 
 Both are built for every ABI Google Play supports: `armeabi-v7a`, `arm64-v8a`, `x86` and `x86_64`.
 
 ## Rootfs
 
-`.github/workflows/build-rootfs.yml` runs twice a month (1st and 15th) and on demand. A release is only published when a package changed, with a changelog of the differences. The Alpine version is set in the workflow's `env` (`ALPINE_VERSION`) and can be overridden for manual runs.
+`.github/workflows/build-rootfs.yml` runs twice a month (1st and 15th) and on demand. A release is only published when a package changed, with a changelog of the differences.
+
+The rootfs is built from [Termux packages](https://github.com/termux/termux-packages) inside [termux-docker](https://github.com/termux/termux-docker) (`rootfs/build.sh`): the packages from `config.yaml` are installed, pip packages are installed (and built, with `build_packages`), and only the files of those packages, their dependencies and what pip added are exported - not the rest of the Termux bootstrap. The Termux prefix is in `usr/` of the archive; the app binds it to `/data/data/com.termux/files/usr` (where Termux binaries expect it) inside proot. Package maintainer scripts are not run.
+
+Termux binaries use Android's own libc (bionic) and are linked for 16 KB pages, so they run on Android 15+ devices and Android 17 emulators with 16 KB pages. The workflow checks every ELF of the 64-bit rootfs for that.
 
 ## PRoot
 

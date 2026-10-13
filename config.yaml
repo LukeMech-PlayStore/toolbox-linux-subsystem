@@ -1,29 +1,19 @@
-apk:
+# Termux packages; only they and their dependencies end up in the rootfs.
+packages:
   - exiftool # Metadata editor
 
   # --- DEPEND #1 qrcode[pil] (from Pillow) ---
-  - libjpeg
+  - libjpeg-turbo
   - zlib
   # --- END_DEPEND #1 ---
 
-  - python3  
+  - python
 pip:
   - qrcode[pil]        # QR Code generator
   - CurrencyConverter  # Currency converter
-  - "--no-binary pillow"
+  - "--no-binary pillow" # Built against the libs above only (Termux's python-pillow pulls in a lot more)
 
 # Build-only dependencies
-# These will be installed, used for setup/pip, and removed before final export.
-apk_build:
-  - build-base       # GCC, Make, libc-dev
-  - linux-headers
-  - openssl-dev
-  - python3-dev      # Python developer tools
-  - py3-setuptools   
-  - py3-pip          # Pip for python
-  - git              # Sometimes needed for pip install git+...
-  # --- DEPEND #1 qrcode[pil] (from Pillow) ---
-  - jpeg-dev 
-  - zlib-dev
-  # --- END_DEPEND #1 ---
-  
+# These are installed for setup/pip, but their files are not exported (python-pip is added when pip has packages).
+build_packages:
+  - build-essential  # Clang, Make, pkg-config
