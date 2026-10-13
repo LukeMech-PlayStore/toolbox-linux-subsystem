@@ -75,6 +75,12 @@ if grep -qx 'lib/libandroid-utimes.so' "$WORK/files"; then
     -o "$STAGE/usr/lib/libandroid-utimes.so"
 fi
 
+# Termux scripts run through $PREFIX/bin/env (or sh), which come with the bootstrap, not as
+# dependencies; Android's own ones do the job
+for tool in env sh; do
+  [ -e "$STAGE/usr/bin/$tool" ] || ln -s "/system/bin/$tool" "$STAGE/usr/bin/$tool"
+done
+
 mkdir -p "$STAGE/etc" "$STAGE/root" "$STAGE/tmp" "$STAGE/usr/tmp"
 echo "$IMAGE_VERSION" > "$STAGE/etc/image-version"
 
