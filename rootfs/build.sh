@@ -19,8 +19,26 @@ mkdir -p "$STAGE/usr" "$OUT" "$WORK"
 
 # Docker-only stand-ins for what Android itself provides
 EXCLUDE='^(aosp-libs|aosp-utils|libandroid-stub|resolv-conf)$'
-# Not needed at runtime (paths relative to $PREFIX)
-PRUNE='^(share/(man|doc|info|locale|lintian)/|include/|lib/.*\.a$|lib/python3[^/]*/(test|idlelib|ensurepip|pydoc_data|tkinter|turtledemo)/|.*/__pycache__/|.*\.py[co]$|.*\.pod$)'
+# Not needed at runtime (EREs on paths relative to $PREFIX)
+PERL='lib/perl5/[^/]+/([^/]+-android/)?(auto/)?'
+PRUNE_PATTERNS=(
+  # Docs, headers, static libs, bytecode
+  'share/(man|doc|info|locale|lintian)/' 'include/' '.*\.h$' 'lib/.*\.a$' '.*/__pycache__/' '.*\.py[co]$' '.*\.pod$'
+  # Python: tests, dev tools, REPL, pure-python fallbacks of C modules
+  'lib/python3[^/]*/(test|idlelib|ensurepip|pydoc_data|tkinter|turtledemo|unittest|_pyrepl|__phello__|config-[^/]*)/'
+  'lib/python3[^/]*/_pydecimal\.py$' 'lib/python3[^/]*/lib-dynload/(_test|_ctypes_test|xx)[^/]*$'
+  # Perl: module building, tests, docs, debugger
+  "$PERL(CPAN|ExtUtils|TAP|Test|Test2|Pod|Devel|App|Module/CoreList)(/|\.pm$)"
+  'lib/perl5/[^/]+/(perl5db\.pl|unicore/TestNorm\.pl)$'
+  # Tools nothing calls (only python3, perl, exiftool and pip's scripts are)
+  'bin/(cpan|corelist|enc2xs|encguess|h2ph|h2xs|instmodsh|json_pp|libnetcfg|perldoc|perlivp|perlthanks|perlbug|piconv|pl2pm|pod2[a-z]+|podchecker|prove|ptar[a-z]*|py3clean|py3compile|pydoc3[.0-9]*|python3[.0-9]*-config|shasum|splain|streamzip|xsubpp|zipdetails|gdbm[a-z_]*|zstd[a-z]*|unzstd|ncursesw6-config|clear|tset|reset|tabs|tic|toe|tput|infocmp|captoinfo|infotocap|idle3[.0-9]*)$'
+  # Unused by the app's features (exiftool only needs Encode for UTF-8; Geolocation.dat is
+  # for its -geolocation option; no script uses sqlite)
+  "${PERL}Encode/(JP|KR|CN|TW)(/|\.pm$)" "${PERL}Unicode/Collate(/|\.pm$)"
+  'lib/perl5/site_perl/[^/]+/Image/ExifTool/Geolocation\.dat$'
+  'lib/libsqlite3[^/]*$' 'lib/python3[^/]*/(sqlite3/|lib-dynload/_sqlite3)'
+)
+PRUNE="^($(IFS='|'; echo "${PRUNE_PATTERNS[*]}"))"
 
 export DEBIAN_FRONTEND=noninteractive
 apt-get update
