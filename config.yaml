@@ -7,11 +7,18 @@ packages:
   - zlib
   # --- END_DEPEND #1 ---
 
+  # --- DEPEND #2 ffmpeg (built in rootfs/build.sh, Termux's pulls in ~390 MB) ---
+  - libmp3lame
+  - libopus
+  # --- END_DEPEND #2 ---
+
+  - quickjs-ng # qjs: yt-dlp's JavaScript runtime (YouTube's player challenges)
   - python
   - dash # $PREFIX/bin/sh for anything shelling out (Android's sh can't run under proot on Samsung)
 pip:
   - qrcode[pil]        # QR Code generator
   - CurrencyConverter  # Currency converter
+  - yt-dlp[default]    # Media downloader (default: yt-dlp-ejs, mutagen, brotli, ...)
   - "--no-binary pillow" # Built against the libs above only (Termux's python-pillow pulls in a lot more)
 
 # Build-only dependencies

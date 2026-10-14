@@ -30,7 +30,7 @@ PRUNE_PATTERNS=(
   # Perl: module building, tests, docs, debugger
   "$PERL(CPAN|ExtUtils|TAP|Test|Test2|Pod|Devel|App|Module/CoreList)(/|\.pm$)"
   'lib/perl5/[^/]+/(perl5db\.pl|unicore/TestNorm\.pl)$'
-  # Tools nothing calls (only python3, perl, exiftool and pip's scripts are)
+  # Tools nothing calls (only python3, perl, exiftool, qjs and pip's scripts are)
   'bin/(cpan|corelist|enc2xs|encguess|h2ph|h2xs|instmodsh|json_pp|libnetcfg|perldoc|perlivp|perlthanks|perlbug|piconv|pl2pm|pod2[a-z]+|podchecker|prove|ptar[a-z]*|py3clean|py3compile|pydoc[.0-9]*|python[.0-9]*-config|shasum|splain|streamzip|xsubpp|zipdetails|gdbm[a-z_]*|zstd[a-z]*|unzstd|ncursesw6-config|clear|tset|reset|tabs|tic|toe|tput|infocmp|captoinfo|infotocap|idle3[.0-9]*)$'
   # Unused by the app's features (exiftool only needs Encode for UTF-8; Geolocation.dat is
   # for its -geolocation option; no script uses sqlite)
@@ -107,6 +107,48 @@ if grep -qx 'lib/libandroid-utimes.so' "$WORK/files"; then
       -o "$STAGE/usr/lib/libandroid-utimes.so"
   fi
 fi
+
+# yt-dlp's ffmpeg (merging, remuxing, audio conversion, thumbnails). Termux's package pulls in
+# ~390 MB of libraries (x265, Vulkan, libass, ...); this one has FFmpeg's own codecs, plus LAME
+# and Opus (see config.yaml) for audio. Its version and checksum follow Termux's recipe.
+FFMPEG_RECIPE=$(curl -fsSL https://raw.githubusercontent.com/termux/termux-packages/master/packages/ffmpeg/build.sh)
+FFMPEG_VERSION=$(sed -n 's/^TERMUX_PKG_VERSION="\{0,1\}\([^"]*\)"\{0,1\}$/\1/p' <<< "$FFMPEG_RECIPE")
+FFMPEG_VERSION=${FFMPEG_VERSION#*:} # without an epoch
+FFMPEG_SHA256=$(sed -n 's/^TERMUX_PKG_SHA256=\([0-9a-f]\{64\}\)$/\1/p' <<< "$FFMPEG_RECIPE")
+[ -n "$FFMPEG_VERSION" ] && [ -n "$FFMPEG_SHA256" ] || { echo "::error::Couldn't read FFmpeg's version from Termux's recipe"; exit 1; }
+
+apt-get install -y curl llvm
+curl -fsSL -o "$WORK/ffmpeg.tar.xz" "https://www.ffmpeg.org/releases/ffmpeg-$FFMPEG_VERSION.tar.xz"
+echo "$FFMPEG_SHA256  $WORK/ffmpeg.tar.xz" | sha256sum -c -
+tar -xJf "$WORK/ffmpeg.tar.xz" -C "$WORK"
+
+case "$(dpkg --print-architecture)" in
+  aarch64) FFMPEG_ARCH=(--arch=aarch64 --enable-neon) ;;
+  arm) FFMPEG_ARCH=(--arch=armeabi-v7a --enable-neon) ;;
+  # Assembly would need text relocations on i686 (https://trac.ffmpeg.org/ticket/4928)
+  i686) FFMPEG_ARCH=(--arch=x86 --disable-asm) ;;
+  x86_64) FFMPEG_ARCH=(--arch=x86_64); apt-get install -y nasm ;;
+esac
+
+(
+  cd "$WORK/ffmpeg-$FFMPEG_VERSION"
+  ./configure --prefix="$PREFIX" --target-os=android --cc=clang --cxx=clang++ "${FFMPEG_ARCH[@]}" \
+    --enable-shared --disable-static --disable-symver --disable-doc --disable-debug --disable-ffplay \
+    --disable-autodetect --disable-devices --disable-hwaccels \
+    --enable-zlib --enable-libmp3lame --enable-libopus \
+    --disable-encoders \
+    --enable-encoder=aac,alac,flac,libmp3lame,libopus,pcm_s16le,mjpeg,png,mov_text,srt,ass,webvtt \
+    --extra-ldflags="-Wl,-z,max-page-size=16384"
+  make -j"$(nproc)"
+  make install DESTDIR="$WORK/ffmpeg-root"
+)
+FFMPEG_ROOT="$WORK/ffmpeg-root$PREFIX"
+cp -a "$FFMPEG_ROOT/bin/ffmpeg" "$FFMPEG_ROOT/bin/ffprobe" "$STAGE/usr/bin/"
+cp -a "$FFMPEG_ROOT"/lib/lib*.so* "$STAGE/usr/lib/"
+find "$STAGE/usr/bin/ffmpeg" "$STAGE/usr/bin/ffprobe" "$STAGE/usr/lib" -maxdepth 1 \
+  \( -name 'ff*' -o -name 'libav*' -o -name 'libsw*' \) -type f -exec llvm-strip --strip-unneeded {} +
+echo "ffmpeg-$FFMPEG_VERSION" >> "$OUT/manifest-pkg.txt"
+sort -o "$OUT/manifest-pkg.txt" "$OUT/manifest-pkg.txt"
 
 # Termux scripts start with $PREFIX/bin/env (e.g. exiftool) and tools call $PREFIX/bin/sh; both
 # come with the bootstrap, not as dependencies. Android's own can't stand in: on some devices
