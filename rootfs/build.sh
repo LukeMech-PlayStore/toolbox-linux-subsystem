@@ -132,6 +132,8 @@ esac
 
 (
   cd "$WORK/ffmpeg-$FFMPEG_VERSION"
+  # Its scripts run with /bin/sh, which Termux doesn't have (like termux-fix-shebang)
+  grep -rlI '^#! */bin/sh' . | xargs -r sed -i "1s|^#! */bin/sh|#!$PREFIX/bin/sh|"
   ./configure --prefix="$PREFIX" --target-os=android --cc=clang --cxx=clang++ "${FFMPEG_ARCH[@]}" \
     --enable-shared --disable-static --disable-symver --disable-doc --disable-debug --disable-ffplay \
     --disable-autodetect --disable-devices --disable-hwaccels \
