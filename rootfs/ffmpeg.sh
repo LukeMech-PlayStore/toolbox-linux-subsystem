@@ -30,13 +30,19 @@ cd "$WORK/ffmpeg-$VERSION"
 grep -rlI '^#! */bin/sh' . | xargs -r termux-fix-shebang
 sed -i "s|^#!/bin/sh\$|#!$PREFIX/bin/sh|" configure
 
+# Audio (yt-dlp's -x), covers (thumbnails), subtitles (movtext is mp4's mov_text)
+ENCODERS=(aac alac flac libmp3lame libopus pcm_s16le mjpeg png movtext subrip srt ass ssa webvtt)
 ./configure --prefix="$PREFIX" --target-os=android --cc=clang --cxx=clang++ "${ARCH[@]}" \
   --enable-shared --disable-static --disable-symver --disable-doc --disable-debug --disable-ffplay \
   --disable-autodetect --disable-devices --disable-hwaccels \
   --enable-zlib --enable-libmp3lame --enable-libopus \
-  --disable-encoders \
-  --enable-encoder=aac,alac,flac,libmp3lame,libopus,pcm_s16le,mjpeg,png,mov_text,srt,ass,webvtt \
+  --disable-encoders --enable-encoder="$(IFS=,; echo "${ENCODERS[*]}")" \
   --extra-ldflags="-Wl,-z,max-page-size=16384"
+# configure only warns about a name it doesn't know (or an encoder it can't build)
+for encoder in "${ENCODERS[@]}"; do
+  grep -q "^#define CONFIG_${encoder^^}_ENCODER 1" config_components.h \
+    || { echo "::error::FFmpeg has no $encoder encoder"; exit 1; }
+done
 make -j"$(nproc)"
 make install DESTDIR="$WORK/ffmpeg-root"
 
