@@ -96,13 +96,16 @@ jobs:
           docker cp "rootfs:$HOME_DIR/out/." manifests
           docker rm rootfs
 
-          # One archive per part: the base and an extension per feature (see config.yaml)
+          # One archive per part: the base and an extension per feature (see config.yaml). Each is
+          # smaller than one -9e block (192 MB), so xz can't split it over threads: the parts are
+          # compressed side by side instead
           for dir in stage/*/; do
             part=$(basename "$dir")
             if [ "$part" = base ]; then lib=librootfs.tar.xz.so; else lib="libfeature-$part-rootfs.tar.xz.so"; fi
-            tar --owner=0 --group=0 --numeric-owner -cf - -C "$dir" . | xz -9e -T0 -c > "out/$ARCH/$lib"
+            tar --owner=0 --group=0 --numeric-owner -cf - -C "$dir" . | xz -9e -T1 -c > "out/$ARCH/$lib" &
             mv "manifests/manifest-$part.txt" "out/manifest-$part-$ARCH.txt"
           done
+          for job in $(jobs -p); do wait "$job"; done
           du -sh stage/* out/"$ARCH"/*
 
       - name: Check 16 KB Alignment
