@@ -1,8 +1,8 @@
 #!/data/data/com.termux/files/usr/bin/bash
-# Run by build.sh (with STAGE, OUT and WORK exported): builds yt-dlp's FFmpeg (merging, remuxing,
-# audio conversion, thumbnails) into the rootfs. Termux's package pulls in ~390 MB of libraries
-# (x265, Vulkan, libass, ...); this one has FFmpeg's own codecs, plus LAME and Opus (see
-# config.yaml) for audio. Its version and checksum follow Termux's recipe.
+# Run by build.sh for its part (STAGE, with WORK, MANIFEST and COMPONENTS): builds yt-dlp's
+# FFmpeg (merging, remuxing, audio conversion, thumbnails) into it. Termux's package pulls in
+# ~390 MB of libraries (x265, Vulkan, libass, ...); this one has FFmpeg's own codecs, plus LAME
+# and Opus (see config.yaml) for audio. Its version and checksum follow Termux's recipe.
 set -euo pipefail
 
 RECIPE=$(curl -fsSL https://raw.githubusercontent.com/termux/termux-packages/master/packages/ffmpeg/build.sh)
@@ -52,5 +52,5 @@ cp -a "$ROOT"/lib/lib*.so* "$STAGE/usr/lib/"
 find "$STAGE/usr/bin/ffmpeg" "$STAGE/usr/bin/ffprobe" "$STAGE/usr/lib" -maxdepth 1 \
   \( -name 'ff*' -o -name 'libav*' -o -name 'libsw*' \) -type f -exec llvm-strip --strip-unneeded {} +
 
-echo "ffmpeg-$VERSION" >> "$OUT/manifest-pkg.txt"
-sort -o "$OUT/manifest-pkg.txt" "$OUT/manifest-pkg.txt"
+echo "ffmpeg-$VERSION" >> "$MANIFEST"
+echo "ffmpeg $VERSION" >> "$COMPONENTS"

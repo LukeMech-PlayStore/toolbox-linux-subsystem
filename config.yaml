@@ -1,27 +1,54 @@
-# Termux packages; only they and their dependencies end up in the rootfs.
-packages:
-  - exiftool # Metadata editor
+# The rootfs comes in parts, shipped in the app's jniLibs (lib*.so, so Android unpacks them with it):
+# - base (librootfs.tar.xz.so): what the extensions build on, unpacked when the app first starts
+# - extensions (libfeature-<name>-rootfs.tar.xz.so): a feature's tools, unpacked on its first use
+#   and deleted with the feature's data
+# Each lists Termux packages and pip packages: they and their dependencies end up in it, minus
+# what the parts it builds on (requires, and always the base) have. What two extensions both need
+# goes to the one they both build on (the base if nothing else).
+base:
+  packages:
+    - dash # $PREFIX/bin/sh for anything shelling out (Android's sh can't run under proot on Samsung)
 
-  # --- DEPEND #1 qrcode[pil] (from Pillow) ---
-  - libjpeg-turbo
-  - zlib
-  # --- END_DEPEND #1 ---
+extensions:
+  python: # Python, for the extensions running on it
+    packages:
+      - python
 
-  # --- DEPEND #2 ffmpeg (built in rootfs/build.sh, Termux's pulls in ~390 MB) ---
-  - libmp3lame
-  - libopus
-  # --- END_DEPEND #2 ---
+  metadata: # Metadata editor
+    packages:
+      - exiftool
 
-  - quickjs-ng # qjs: yt-dlp's JavaScript runtime (YouTube's player challenges)
-  - python
-  - dash # $PREFIX/bin/sh for anything shelling out (Android's sh can't run under proot on Samsung)
-pip:
-  - qrcode[pil]        # QR Code generator
-  - CurrencyConverter  # Currency converter
-  - yt-dlp[default]    # Media downloader (default: yt-dlp-ejs, mutagen, brotli, ...)
-  - "--no-binary pillow" # Built against the libs above only (Termux's python-pillow pulls in a lot more)
+  qr: # QR generator
+    requires: [python]
+    packages:
+      # qrcode[pil]'s Pillow is built against these only (see pip_options)
+      - libjpeg-turbo
+      - zlib
+    pip:
+      - qrcode[pil]
+
+  currency: # Currency converter
+    requires: [python]
+    pip:
+      - CurrencyConverter
+
+  media: # Media downloader
+    requires: [python]
+    packages:
+      - quickjs-ng # qjs: yt-dlp's JavaScript runtime (YouTube's player challenges)
+      # FFmpeg's audio encoders (see script)
+      - libmp3lame
+      - libopus
+    pip:
+      - yt-dlp[default] # default: yt-dlp-ejs, mutagen, brotli, ...
+    # Run after the rest is in place (rootfs/<script>): FFmpeg, built from source since Termux's
+    # pulls in ~390 MB of libraries
+    script: ffmpeg.sh
+
+# For every pip install
+pip_options: --no-binary pillow # Built against the libs above only (Termux's python-pillow pulls in a lot more)
 
 # Build-only dependencies
 # These are installed for setup/pip, but their files are not exported (python-pip is added when pip has packages).
 build_packages:
-  - build-essential  # Clang, Make, pkg-config
+  - build-essential # Clang, Make, pkg-config

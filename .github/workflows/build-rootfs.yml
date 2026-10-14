@@ -82,30 +82,28 @@ jobs:
         env:
           IMAGE: termux/termux-docker:${{ matrix.image }}
           IMAGE_VERSION: ${{ needs.prepare.outputs.version }}
+          ARCH: ${{ matrix.arch }}
         run: |
-          mkdir -p out
-
-          if [ -f config.yaml ]; then
-            PKGS=$(yq -r '(.packages // [])[]' config.yaml | tr '\n' ' ')
-            BUILD_PKGS=$(yq -r '(.build_packages // [])[]' config.yaml | tr '\n' ' ')
-            PIP_ARGS=$(yq -r '(.pip // [])[]' config.yaml | tr '\n' ' ')
-          else
-            echo "No config.yaml found!"
-            exit 1
-          fi
+          mkdir -p "out/$ARCH" manifests
+          CONFIG=$(yq -o=json -I=0 '.' config.yaml)
 
           # Privileged: ARM images need personality(), even on ARM hosts (see termux-docker's README)
           docker run --privileged --name rootfs -v "$PWD/rootfs:/build:ro" "$IMAGE" \
-            bash /build/build.sh "$IMAGE_VERSION" "$PKGS" "$BUILD_PKGS" "$PIP_ARGS"
+            bash /build/build.sh "$IMAGE_VERSION" "$CONFIG"
 
           HOME_DIR=/data/data/com.termux/files/home
           docker cp "rootfs:$HOME_DIR/rootfs" stage
-          docker cp "rootfs:$HOME_DIR/out/manifest-pkg.txt" "out/manifest-pkg-${{ matrix.arch }}.txt"
-          docker cp "rootfs:$HOME_DIR/out/manifest-pip.txt" "out/manifest-pip-${{ matrix.arch }}.txt"
+          docker cp "rootfs:$HOME_DIR/out/." manifests
           docker rm rootfs
 
-          tar --owner=0 --group=0 --numeric-owner -cf - -C stage . | xz -9e -T0 -c > "out/rootfs-${{ matrix.arch }}.tar.xz"
-          du -sh stage "out/rootfs-${{ matrix.arch }}.tar.xz"
+          # One archive per part: the base and an extension per feature (see config.yaml)
+          for dir in stage/*/; do
+            part=$(basename "$dir")
+            if [ "$part" = base ]; then lib=librootfs.tar.xz.so; else lib="libfeature-$part-rootfs.tar.xz.so"; fi
+            tar --owner=0 --group=0 --numeric-owner -cf - -C "$dir" . | xz -9e -T0 -c > "out/$ARCH/$lib"
+            mv "manifests/manifest-$part.txt" "out/manifest-$part-$ARCH.txt"
+          done
+          du -sh stage/* out/"$ARCH"/*
 
       - name: Check 16 KB Alignment
         if: matrix.check_16k
@@ -127,10 +125,7 @@ jobs:
         uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
         with:
           name: build-data-${{ matrix.arch }}
-          path: |
-            out/rootfs-${{ matrix.arch }}.tar.xz
-            out/manifest-pkg-${{ matrix.arch }}.txt
-            out/manifest-pip-${{ matrix.arch }}.txt
+          path: out/
 
   # ------------------------------------------------------------------
   # JOB 3: Release & Compare
@@ -156,137 +151,99 @@ jobs:
           GH_TOKEN: ${{ github.token }}
         run: |
           mkdir -p prev_assets
-           
-          # 1. Find latest release (Filter out 'proot-')
+
+          # Latest rootfs release (not proot-*)
           LATEST_TAG=$(gh release list --limit 20 --exclude-drafts --exclude-pre-releases --json tagName \
             --jq '.[] | select(.tagName | startswith("proot-") | not) | .tagName' | head -n 1 || echo "")
-           
+
           echo "Latest detected tag: [$LATEST_TAG]"
-           
+
           if [ -z "$LATEST_TAG" ] || [ "$LATEST_TAG" == "null" ]; then
             echo "is_initial=true" >> $GITHUB_OUTPUT
             echo "::notice::No previous release found."
           else
             echo "is_initial=false" >> $GITHUB_OUTPUT
-            
-            # 2. Attempt to download manifests
-            for arch in x86_64 aarch64 arm x86; do
-              # Termux packages
-              if ! gh release download "$LATEST_TAG" -p "manifest-pkg-${arch}.txt" -O "prev_assets/manifest-pkg-${arch}.txt" 2>/dev/null; then
-                 echo "No package manifest found for $arch. Treating as new."
-                 touch "prev_assets/manifest-pkg-${arch}.txt"
-              fi
-
-              # PIP
-              if ! gh release download "$LATEST_TAG" -p "manifest-pip-${arch}.txt" -O "prev_assets/manifest-pip-${arch}.txt" 2>/dev/null; then
-                 touch "prev_assets/manifest-pip-${arch}.txt"
-              fi
-            done
+            # One per part and ABI; a part missing there (e.g. a new one) counts as all new
+            gh release download "$LATEST_TAG" -p 'manifest-*.txt' -D prev_assets || echo "No manifests in $LATEST_TAG"
           fi
 
-      - name: Generate Unified Changelog
+      - name: Generate Changelog
         id: changelog
         run: |
           mkdir -p rows
           CHANGES_DETECTED="false"
+          ARCHES="x86_64 aarch64 arm x86"
+          # Parts as built (manifest-<part>-<arch>.txt), the base first
+          PARTS=$(ls current_assets/manifest-*-x86_64.txt | sed 's|.*/manifest-||; s|-x86_64\.txt$||' \
+            | awk '{ print ($0 == "base" ? 0 : 1), $0 }' | sort | cut -d' ' -f2)
 
-          parse_pkg_line() {
-            local line="$1"
-            pkg="${line%%-[0-9]*}"
-            ver="${line#${pkg}-}"
-            echo "$pkg $ver"
-          }
-
-          parse_pip_line() {
-            local line="$1"
-            pkg="${line%%==*}"
-            ver="${line#${pkg}==}"
-            echo "$pkg $ver"
+          # "name-1.2" (Termux) or "name==1.2" (pip) as "name version"
+          parse_line() {
+            if [[ "$1" == *==* ]]; then
+              echo "${1%%==*} ${1#*==}"
+            else
+              local pkg="${1%%-[0-9]*}"
+              echo "$pkg ${1#${pkg}-}"
+            fi
           }
 
           generate_rows() {
-            local arch=$1
-            local outfile="rows/${arch}.txt"
-            touch "$outfile"
-
-            cat "prev_assets/manifest-pkg-${arch}.txt" "prev_assets/manifest-pip-${arch}.txt" > combined_old.txt
-            cat "current_assets/manifest-pkg-${arch}.txt" "current_assets/manifest-pip-${arch}.txt" > combined_new.txt
-
+            local part=$1 arch=$2
+            local outfile="rows/$part-$arch.txt"
+            : > "$outfile"
             declare -A OLD NEW
-
-            # Read Combined OLD
+            local line pkg ver
             while read -r line; do
               [ -z "$line" ] && continue
-              if [[ "$line" == *==* ]]; then
-                read pkg ver <<<"$(parse_pip_line "$line")"
-              else
-                read pkg ver <<<"$(parse_pkg_line "$line")"
-              fi
+              read -r pkg ver <<<"$(parse_line "$line")"
               OLD["$pkg"]="$ver"
-            done < combined_old.txt
-
-            # Read Combined NEW
+            done < <(cat "prev_assets/manifest-$part-$arch.txt" 2>/dev/null || true)
             while read -r line; do
               [ -z "$line" ] && continue
-              if [[ "$line" == *==* ]]; then
-                read pkg ver <<<"$(parse_pip_line "$line")"
-              else
-                read pkg ver <<<"$(parse_pkg_line "$line")"
-              fi
+              read -r pkg ver <<<"$(parse_line "$line")"
               NEW["$pkg"]="$ver"
-            done < combined_new.txt
+            done < "current_assets/manifest-$part-$arch.txt"
 
-            ALL_PKGS=$(printf "%s\n" "${!OLD[@]}" "${!NEW[@]}" | sort -u)
-
-            for pkg in $ALL_PKGS; do
-              old="${OLD[$pkg]}"
-              new="${NEW[$pkg]}"
+            for pkg in $(printf "%s\n" "${!OLD[@]}" "${!NEW[@]}" | sort -u); do
+              local old="${OLD[$pkg]:-}" new="${NEW[$pkg]:-}"
               if [[ -n "$old" && -n "$new" ]]; then
-                if [[ "$old" != "$new" ]]; then
-                  echo "| ⬆️ | \`$pkg\` | \`$old\` | \`$new\` |" >> "$outfile"
-                fi
+                if [[ "$old" != "$new" ]]; then echo "| ⬆️ | \`$pkg\` | \`$old\` | \`$new\` |" >> "$outfile"; fi
               elif [[ -n "$old" ]]; then
                 echo "| ❌ | \`$pkg\` | \`$old\` | - |" >> "$outfile"
               elif [[ -n "$new" ]]; then
                 echo "| 🟢 | \`$pkg\` | - | \`$new\` |" >> "$outfile"
               fi
             done
-
             sort -o "$outfile" "$outfile"
-
-            if [ -s "$outfile" ]; then
-              CHANGES_DETECTED="true"
-            fi
-            
-            rm combined_old.txt combined_new.txt
           }
 
-          generate_rows x86_64
-          generate_rows aarch64
-          generate_rows arm
-          generate_rows x86
-
+          TABLE_HEAD="| ● | Package | Old | New |"$'\n'"|:--:|:--------|:----|:-----|"$'\n'
           FINAL_LOG=""
+          for part in $PARTS; do
+            for arch in $ARCHES; do generate_rows "$part" "$arch"; done
+            if [ "$part" = base ]; then lib=librootfs.tar.xz.so; else lib="libfeature-$part-rootfs.tar.xz.so"; fi
+
+            SECTION=""
+            if [ -s "rows/$part-x86_64.txt" ]; then
+              SECTION+="$TABLE_HEAD$(cat "rows/$part-x86_64.txt")"$'\n'
+            fi
+            for arch in aarch64 arm x86; do
+              comm -13 "rows/$part-x86_64.txt" "rows/$part-$arch.txt" > "rows/$part-$arch-only.txt"
+              if [ -s "rows/$part-$arch-only.txt" ]; then
+                SECTION+=$'\n'"**$arch only**"$'\n\n'"$TABLE_HEAD$(cat "rows/$part-$arch-only.txt")"$'\n'
+              fi
+            done
+            if [ -n "$SECTION" ]; then
+              CHANGES_DETECTED="true"
+              FINAL_LOG+="### 📦 $part (\`$lib\`)"$'\n\n'"$SECTION"$'\n'
+            fi
+          done
 
           if [ "${{ steps.fetch_prev.outputs.is_initial }}" == "true" ]; then
             CHANGES_DETECTED="true"
             FINAL_LOG="Initial Release."
           elif [ "$CHANGES_DETECTED" == "true" ]; then
-            FINAL_LOG+="### 🚀 Changes"$'\n'
-            FINAL_LOG+="| ● | Package | Old | New |"$'\n'
-            FINAL_LOG+="|:--:|:--------|:----|:-----|"$'\n'
-            FINAL_LOG+=$(cat "rows/x86_64.txt")
-            
-            for arch in aarch64 arm x86; do
-              diff_out="rows/${arch}_specific.txt"
-              comm -13 rows/x86_64.txt rows/${arch}.txt > "$diff_out"
-              if [ -s "$diff_out" ]; then
-                FINAL_LOG+=$'\n\n'"### 📦 ${arch} Specifics"$'\n'
-                FINAL_LOG+="| ● | Package | Old | New |"$'\n'
-                FINAL_LOG+="|:--:|:--------|:----|:-----|"$'\n'
-                FINAL_LOG+="$(cat "$diff_out")"
-              fi
-            done
+            FINAL_LOG="## 🚀 Changes"$'\n\n'"$FINAL_LOG"
           fi
 
           if [ "${{ inputs.force_release }}" == "true" ]; then
@@ -296,26 +253,19 @@ jobs:
           echo "needed=$CHANGES_DETECTED" >> $GITHUB_OUTPUT
           printf "full_log<<EOF\n%s\nEOF\n" "$FINAL_LOG" >> $GITHUB_OUTPUT
 
-          
       - name: Package Artifacts
         if: steps.changelog.outputs.needed == 'true'
         run: |
-          mkdir -p final_package
-          
+          # Every part of an architecture into its ABI's jniLibs folder
           package_arch() {
-            local SRC_ARCH=$1
-            local DEST_DIR=$2
-            mkdir -p "final_package/$DEST_DIR"
-            if [ -f "current_assets/rootfs-${SRC_ARCH}.tar.xz" ]; then
-              mv "current_assets/rootfs-${SRC_ARCH}.tar.xz" \
-                  "final_package/$DEST_DIR/librootfs.tar.xz.so"
-            fi
+            mkdir -p "final_package/$2"
+            cp current_assets/"$1"/*.so "final_package/$2/"
           }
 
           package_arch "x86_64"  "x86_64"
           package_arch "aarch64" "arm64-v8a"
-          package_arch "arm"      "armeabi-v7a"
-          package_arch "x86"      "x86"
+          package_arch "arm"     "armeabi-v7a"
+          package_arch "x86"     "x86"
 
           echo "==> Creating Master Archive..."
           tar -czf rootfs.tar.gz -C final_package .
