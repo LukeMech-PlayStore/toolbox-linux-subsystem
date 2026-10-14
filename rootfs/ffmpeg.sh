@@ -47,6 +47,8 @@ make -j"$(nproc)"
 make install DESTDIR="$WORK/ffmpeg-root"
 
 ROOT="$WORK/ffmpeg-root$PREFIX"
+# Its own part may have nothing else there yet
+mkdir -p "$STAGE/usr/bin" "$STAGE/usr/lib"
 cp -a "$ROOT/bin/ffmpeg" "$ROOT/bin/ffprobe" "$STAGE/usr/bin/"
 cp -a "$ROOT"/lib/lib*.so* "$STAGE/usr/lib/"
 find "$STAGE/usr/bin/ffmpeg" "$STAGE/usr/bin/ffprobe" "$STAGE/usr/lib" -maxdepth 1 \
