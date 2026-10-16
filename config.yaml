@@ -33,6 +33,8 @@ proot:
 #   installs those first
 # - pip_libs: Termux libraries its pip packages are compiled against (installed before pip)
 # - pip_options: options for pip installing them
+# - rebuild: Termux packages built with Termux's recipe of them, without some of its configure
+#   options (rootfs/termux-build.sh): what they link of their dependencies follows
 # - exclude: dependencies to leave out (with what only they need)
 # Everything a part's packages use comes along, and only that: the libraries they link, the
 # interpreters their scripts run, the data those come with (rootfs/parts.py linked). Termux's
@@ -48,18 +50,58 @@ packages:
       - dash # $PREFIX/bin/sh for anything shelling out (Android's sh can't run under proot on Samsung)
 
   extensions:
+    # What Python and FFmpeg both link (OpenSSL, libffi, zlib, ...): no packages of its own, so
+    # neither needs the other, and the base everyone gets stays small
+    libs_py_ffmpeg: {}
+
     python: # Python, for the tools running on it
+      requires: [libs_py_ffmpeg]
       packages:
         - python
 
     ffmpeg: # Video encoder, and yt-dlp's (merging, remuxing, audio conversion, thumbnails)
       # Not on Python: GLib's and libplacebo's packages depend on it, but nothing FFmpeg links does
+      requires: [libs_py_ffmpeg]
       packages:
-        - ffmpeg # Termux's, with its video encoders (x264, x265, VP9, AV1) and filters
+        - ffmpeg
+      # Built with Termux's recipe (its source, patches and options: x264, x265, VP9, SVT-AV1, dav1d,
+      # Opus, MP3, Vorbis, WebP, subtitles, MediaCodec), without what the tools don't use: Termux's
+      # links every one of these, so it can't start without them (~35 MB)
+      rebuild:
+        ffmpeg:
+          drop:
+            - --enable-libaom # More AV1 encoders: SVT-AV1 is the one used
+            - --enable-librav1e
+            - --enable-libplacebo # Vulkan filters (no Vulkan under proot), with glslang
+            - --enable-vulkan
+            - --enable-opencl
+            - --enable-libjxl # JPEG XL
+            - --enable-librubberband # Audio filters nothing uses
+            - --enable-libmysofa
+            - --enable-libbs2b
+            - --enable-libbluray # Discs, tracker and game music
+            - --enable-libdvdnav
+            - --enable-libdvdread
+            - --enable-libopenmpt
+            - --enable-libgme
+            - --enable-libssh # Network protocols nothing uses
+            - --enable-libsrt
+            - --enable-libzmq
+            - --enable-libxcb # X11 screen capture
+            - --enable-libxcb-shm
+            - --enable-libxcb-xfixes
+            - --enable-libxcb-shape
+            - --enable-indev=xcbgrab
+            - --enable-libv4l2 # Cameras through V4L2
+            - --enable-libvmaf # Quality metrics
+            - --enable-libxvid # Old or rare encoders (FFmpeg decodes these itself)
+            - --enable-libtheora
+            - --enable-libopencore-amrnb
+            - --enable-libopencore-amrwb
+            - --enable-libvo-amrwbenc
+          # Not in the recipe (Termux's build host has it): FFmpeg's x86 assembly
+          build_packages: [nasm]
       exclude:
-        # Termux's Vulkan loader: libplacebo gets Android's (libvulkan.so), with the GPU's driver.
-        # Mesa's software one (~178 MB with LLVM) goes with it, being only ever loaded by it
-        - vulkan-loader-generic
         # Fontconfig's DejaVu fonts: it finds Android's in /system/fonts (bound in proot)
         - ttf-dejavu # ~10 MB
 
@@ -86,6 +128,10 @@ packages:
       requires: [python, ffmpeg]
       packages:
         - yt-dlp
+      exclude:
+        # Optional to yt-dlp (it has its own AES, and asks for no brotli then)
+        - python-pycryptodomex
+        - python-brotli
 
   # Only for building: installed when pip has packages, never in a part (left out with what only
   # they need, even as a dependency, as python-yt-dlp's of python-pip)

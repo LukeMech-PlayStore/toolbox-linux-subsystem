@@ -78,6 +78,19 @@ if [ ${#PIP[@]} -gt 0 ]; then
     "${PIP_OPTIONS[@]}" "${PIP[@]}"
 fi
 apt-get install -y "${PKGS[@]}"
+# Packages built anew with Termux's recipe, without some of its options (config.yaml's rebuild), over
+# Termux's own: what they link then decides what comes along (parts.py linked)
+for p in "${PARTS[@]}"; do
+  for pkg in $(cfg "($(part_of "$p").rebuild // {}) | keys[]"); do
+    entry="$(part_of "$p").rebuild[\"$pkg\"]"
+    mapfile -t drop < <(cfg "$entry.drop // [] | .[]")
+    mapfile -t tools < <(cfg "$entry.build_packages // [] | .[]")
+    apt-get install -y "${BUILD_PKGS[@]}" "${tools[@]}"
+    WORK="$WORK" bash "$HERE/termux-build.sh" "$pkg" "$WORK/rebuilt-$pkg" "${drop[@]}"
+    cp -a "$WORK/rebuilt-$pkg$PREFIX/." "$PREFIX/"
+    echo "$pkg: rebuilt without ${drop[*]}"
+  done
+done
 # A part's packages (or <key>'s, e.g. pip_libs) as installed: a name another package provides (as
 # apt took it, e.g. yt-dlp for python-yt-dlp) is that package
 packages_of() {

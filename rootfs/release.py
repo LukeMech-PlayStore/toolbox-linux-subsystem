@@ -26,7 +26,7 @@ import tarfile
 
 HERE = os.path.dirname(os.path.abspath(__file__))
 # What every part is built with (not this script: it only picks what ships)
-SHARED_SCRIPTS = ["build.sh", "parts.py", "pip-files.py", "rebuild-16k.sh"]
+SHARED_SCRIPTS = ["build.sh", "parts.py", "pip-files.py", "rebuild-16k.sh", "termux-build.sh"]
 
 
 def lib_of(part):

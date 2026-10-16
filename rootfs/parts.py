@@ -225,7 +225,7 @@ def linked(prefix, status, files_tsv, prune, config_path, work):
                for path in paths if path.startswith("lib/") and own_file(path)}
     errors = []
 
-    used_anywhere, candidates = set(), set()
+    used_anywhere, candidates, narrowed = set(), set(), {}
     for p in parts:
         # What it runs with: its packages and those of the parts it builds on
         scope = closure[p].union(*(closure[a] for a in anc[p]))
@@ -297,15 +297,21 @@ def linked(prefix, status, files_tsv, prune, config_path, work):
                         program = "bin/" + words[1]
                     todo.append(program)
 
-        with open(os.path.join(work, f"{p}.apt"), "w", encoding="utf-8") as f:
-            f.write("".join(f"{n}\n" for n in sorted(closure[p] & used)))
+        narrowed[p] = closure[p] & used
         used_anywhere |= reached
         candidates |= {path for package in used for path in files.get(package, []) if own_file(path)}
 
     if errors:
         sys.exit("\n".join(sorted(set(errors))))
+    unused = candidates - used_anywhere
+    for p in parts:
+        # Only packages something of which ships (not one all of whose files are pruned or unused,
+        # e.g. Python's gdbm, or one with none, e.g. vulkan-icd): no part lists what it doesn't hold
+        ships = {n for n in narrowed[p] if any(path not in unused for path in files.get(n, []))}
+        with open(os.path.join(work, f"{p}.apt"), "w", encoding="utf-8") as f:
+            f.write("".join(f"{n}\n" for n in sorted(ships)))
     with open(os.path.join(work, "unused.txt"), "w", encoding="utf-8") as f:
-        f.write("".join(f"{path}\n" for path in sorted(candidates - used_anywhere)))
+        f.write("".join(f"{path}\n" for path in sorted(unused)))
 
 
 if __name__ == "__main__":
