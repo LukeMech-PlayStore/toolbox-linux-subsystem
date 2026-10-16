@@ -3,8 +3,9 @@
 #   bash build.sh <image version> <config.yaml as JSON>
 # Installs everything config.yaml asks for and leaves the rootfs parts in ~/rootfs/<part> (base
 # and the extensions), each holding only its packages' files (with their dependencies, minus what
-# the parts it builds on have) and what pip added for it - not the rest of the Termux bootstrap
-# (apt, bash, ...). The Termux prefix goes to usr/; the app binds it back to $PREFIX inside proot.
+# the parts it builds on have, and minus what its packages don't use of them) and what pip added
+# for it - not the rest of the Termux bootstrap (apt, bash, ...), nor the build packages. The
+# Termux prefix goes to usr/; the app binds it back to $PREFIX inside proot.
 # Manifests and components (what the app tells a part holds), one of each per part, go to ~/out.
 set -euo pipefail
 
@@ -24,6 +25,11 @@ PERL='lib/perl5/[^/]+/([^/]+-android/)?(auto/)?'
 PRUNE_PATTERNS=(
   # Docs, headers, static libs, bytecode, GObject introspection's XML (for building bindings)
   'share/(man|doc|info|locale|lintian|gir-1\.0)/' 'include/' '.*\.h$' 'lib/.*\.a$' '.*/__pycache__/' '.*\.py[co]$' '.*\.pod$'
+  # Build files, GObject introspection's typelibs, shell completions, patch leftovers
+  'lib/(cmake|pkgconfig|girepository-1\.0)/' 'share/(aclocal|pkgconfig|bash-completion|fish|zsh)/' '.*\.orig$'
+  # GLib's schemas and codegen, Python packages' tests, libmysofa's HRTF samples (sofalizer
+  # only loads the file it's given)
+  'share/(glib-2\.0|libmysofa)/' 'lib/python3[^/]*/site-packages/Cryptodome/SelfTest/'
   # Python: tests, dev tools, REPL, pure-python fallbacks of C modules
   'lib/python3[^/]*/(test|idlelib|ensurepip|pydoc_data|tkinter|turtledemo|unittest|_pyrepl|__phello__|config-[^/]*)/'
   'lib/python3[^/]*/_pydecimal\.py$' 'lib/python3[^/]*/lib-dynload/(_test|_ctypes_test|xx)[^/]*$'
@@ -57,6 +63,7 @@ list_of() { cfg "($(part_of "$1") // {}) | (.$2 // [])[]"; }
 mapfile -t PARTS < <(echo base; cfg '(.extensions // {}) | keys_unsorted[]')
 mapfile -t PKGS < <(for p in "${PARTS[@]}"; do list_of "$p" packages; done | sort -u)
 mapfile -t PIP < <(for p in "${PARTS[@]}"; do list_of "$p" pip; done)
+# Installed for pip, never exported (left out of every part, with what only they need)
 mapfile -t BUILD_PKGS < <(cfg '(.build_packages // [])[]')
 read -r -a PIP_OPTIONS <<< "$(cfg '.pip_options // ""')"
 
@@ -76,7 +83,7 @@ packages_of() {
   done
 }
 if [ ${#PIP[@]} -gt 0 ]; then
-  apt-get install -y python-pip "${BUILD_PKGS[@]}"
+  apt-get install -y "${BUILD_PKGS[@]}"
   # Termux builds with 16 KB pages in mind, make sure locally built modules are too
   LDFLAGS="-Wl,-z,max-page-size=16384" pip install --no-cache-dir --no-compile --break-system-packages \
     "${PIP_OPTIONS[@]}" "${PIP[@]}"
@@ -89,8 +96,8 @@ for p in "${PARTS[@]}"; do
     apt-cache depends --recurse --installed --no-recommends --no-suggests --no-conflicts \
         --no-breaks --no-replaces --no-enhances "${pkgs[@]}" \
       | grep -v '^[ <]' | sort -u | grep -Ev "$EXCLUDE" > "$WORK/$p.apt"
-    # Minus what it leaves out (exclude) and what only that needed
-    mapfile -t excluded < <(list_of "$p" exclude)
+    # Minus what it leaves out (exclude, and the build packages) and what only that needed
+    mapfile -t excluded < <(list_of "$p" exclude; printf '%s\n' "${BUILD_PKGS[@]}")
     if [ ${#excluded[@]} -gt 0 ]; then
       python3 "$HERE/parts.py" reachable "$PREFIX/var/lib/dpkg/status" "$WORK/$p.apt" \
         "$(IFS=,; echo "${excluded[*]}")" "${pkgs[@]}" > "$WORK/$p.apt.kept"
@@ -99,9 +106,20 @@ for p in "${PARTS[@]}"; do
   else
     : > "$WORK/$p.apt"
   fi
+  # Its own packages, and what pip added for it (see parts.py linked)
+  printf '%s\n' "${pkgs[@]}" | grep . > "$WORK/$p.roots" || true
   mapfile -t reqs < <(list_of "$p" pip)
   if [ ${#reqs[@]} -gt 0 ]; then python3 "$HERE/pip-files.py" closure "${reqs[@]}" > "$WORK/$p.pip"; else : > "$WORK/$p.pip"; fi
+  if [ -s "$WORK/$p.pip" ]; then xargs python3 "$HERE/pip-files.py" files < "$WORK/$p.pip"; fi > "$WORK/$p.pip.files"
 done
+
+# Minus what the parts' own packages don't use of their dependencies (see parts.py linked)
+sort -u "$WORK"/*.apt | while IFS= read -r pkg; do
+  dpkg -L "$pkg" | sed "s|^|$pkg\t|"
+done > "$WORK/files.tsv"
+python3 "$HERE/parts.py" linked "$PREFIX" "$PREFIX/var/lib/dpkg/status" "$WORK/files.tsv" "$PRUNE" \
+  "$WORK/config.json" "$WORK"
+echo "Not used by any part: $(wc -l < "$WORK/unused.txt") libraries and programs"
 
 # What each part gets (shared dependencies go to a part they build on)
 python3 "$HERE/parts.py" split "$WORK/config.json" "$WORK"
@@ -121,7 +139,8 @@ for p in "${PARTS[@]}"; do
       if [ -f "$f" ] || [ -L "$f" ]; then echo "$f"; fi
     done
     if [ -s "$WORK/$p.pip.own" ]; then xargs python3 "$HERE/pip-files.py" files < "$WORK/$p.pip.own"; fi
-  } | sed "s|^$PREFIX/||" | { grep -Ev "^/|$PRUNE" || true; } | sort -u > "$WORK/$p.files"
+  } | sed "s|^$PREFIX/||" | { grep -Ev "^/|$PRUNE" || true; } | { grep -vxF -f "$WORK/unused.txt" || true; } \
+    | sort -u > "$WORK/$p.files"
   tar -C "$PREFIX" --no-recursion -cf - -T "$WORK/$p.files" | tar -C "$STAGE/usr" -xf -
 
   # What the app tells it unpacks: the part's own packages
@@ -131,10 +150,8 @@ for p in "${PARTS[@]}"; do
     if [ ${#reqs[@]} -gt 0 ]; then python3 "$HERE/pip-files.py" top "${reqs[@]}"; fi
   } > "$COMPONENTS"
 
-  # Termux's libandroid-utimes is still linked for 4 KB pages (see the script)
-  if grep -qx 'lib/libandroid-utimes.so' "$WORK/$p.files"; then
-    STAGE="$STAGE" bash "$HERE/libandroid-utimes.sh"
-  fi
+  # Libraries Termux still links for 4 KB pages, rebuilt (see the script)
+  STAGE="$STAGE" bash "$HERE/rebuild-16k.sh"
   script=$(cfg "$(part_of "$p").script // empty")
   if [ -n "$script" ]; then
     STAGE="$STAGE" MANIFEST="$MANIFEST" COMPONENTS="$COMPONENTS" bash "$HERE/$script"

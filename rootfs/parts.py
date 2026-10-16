@@ -10,10 +10,23 @@
       Prints the packages of <closure file> (apt-cache's, one per line) the <package>s still need
       without the excluded ones (a part's exclude, e.g. a driver only ever loaded when it's there):
       those and what only they needed go.
+
+  parts.py linked <prefix> <dpkg status> <files.tsv> <prune regex> <config.json> <work dir>
+      What the parts' own packages really use of their dependencies (Termux's declare a lot only
+      their tools, or their building, need: FFmpeg's pull in libtiff, X11, cairo, Python, ...).
+      A part uses all files of its own packages (<part>.roots) and what pip added for it
+      (<part>.pip.files), what those link (DT_NEEDED, all the way down) and the interpreters its
+      scripts start with. A dependency package without libraries or programs of its own (data,
+      fonts, modules in a subfolder of lib/) comes with the used one depending on it. So:
+      - <part>.apt is narrowed down to the packages it uses
+      - <work dir>/unused.txt gets the libraries and programs (lib/*, bin/* of a dependency) no
+        part uses, relative to <prefix>: those of a package aren't exported
+      <files.tsv>: "package<TAB>file" for every file of the installed packages (dpkg -L).
 """
 import json
 import os
 import re
+import struct
 import sys
 
 
@@ -141,6 +154,147 @@ def reachable(status, closure_file, excluded, *roots):
     print("".join(f"{n}\n" for n in sorted(seen)), end="")
 
 
+def elf_needed(path):
+    """The DT_NEEDED names of an ELF file (32 or 64-bit, little endian: every Android ABI), None if it isn't one."""
+    with open(path, "rb") as f:
+        if f.read(4) != b"\x7fELF":
+            return None
+        data = b"\x7fELF" + f.read()
+    is64 = data[4] == 2
+    if is64:
+        phoff, = struct.unpack_from("<Q", data, 0x20)
+        phentsize, phnum = struct.unpack_from("<HH", data, 0x36)
+        phdr, dyn_entry = "<IIQQQQQQ", "<qQ"
+    else:
+        phoff, = struct.unpack_from("<I", data, 0x1C)
+        phentsize, phnum = struct.unpack_from("<HH", data, 0x2A)
+        phdr, dyn_entry = "<IIIIIIII", "<iI"
+    loads, dynamic = [], None
+    for i in range(phnum):
+        fields = struct.unpack_from(phdr, data, phoff + i * phentsize)
+        if is64:
+            p_type, _, p_offset, p_vaddr, _, p_filesz, _, _ = fields
+        else:
+            p_type, p_offset, p_vaddr, _, p_filesz, _, _, _ = fields
+        if p_type == 1:  # PT_LOAD
+            loads.append((p_vaddr, p_offset, p_filesz))
+        elif p_type == 2:  # PT_DYNAMIC
+            dynamic = (p_offset, p_filesz)
+    if not dynamic:
+        return []
+    entries = []
+    step = struct.calcsize(dyn_entry)
+    for offset in range(dynamic[0], dynamic[0] + dynamic[1], step):
+        tag, value = struct.unpack_from(dyn_entry, data, offset)
+        if tag == 0:
+            break
+        entries.append((tag, value))
+    # DT_STRTAB is an address: the file offset is that of the segment holding it
+    strtab = next((value - vaddr + offset for tag, value in entries if tag == 5
+                   for vaddr, offset, size in loads if vaddr <= value < vaddr + size), None)
+    if strtab is None:
+        return []
+    return [data[strtab + value:data.index(b"\0", strtab + value)].decode() for tag, value in entries if tag == 1]
+
+
+def own_file(path):
+    """A package's own library or program (lib/* or bin/*, not in a subfolder): only there when used."""
+    return re.match(r"(lib|bin)/[^/]+$", path) is not None
+
+
+def linked(prefix, status, files_tsv, prune, config_path, work):
+    _, parts, requires = load(config_path)
+    anc = {p: ancestors(p, requires) for p in parts}
+    packages = read_status(status)
+    pruned = re.compile(prune)
+    files = {}
+    with open(files_tsv, encoding="utf-8") as f:
+        for line in f:
+            package, path = line.rstrip("\n").split("\t", 1)
+            if not path.startswith(prefix + "/"):
+                continue
+            path = path[len(prefix) + 1:]
+            full = os.path.join(prefix, path)
+            if (os.path.islink(full) or os.path.isfile(full)) and not pruned.match(path):
+                files.setdefault(package, []).append(path)
+    closure = {p: read_lines(os.path.join(work, f"{p}.apt")) for p in parts}
+
+    used_anywhere, candidates = set(), set()
+    for p in parts:
+        # What it runs with: its packages and those of the parts it builds on
+        scope = closure[p].union(*(closure[a] for a in anc[p]))
+        owner = {path: package for package in scope for path in files.get(package, [])}
+        libs = {path[4:]: path for path in owner if path.startswith("lib/") and own_file(path)}
+        providers = {}
+        for name in scope:
+            for virtual in packages.get(name, ([], []))[1]:
+                providers.setdefault(virtual, []).append(name)
+
+        def has_own(package):
+            return any(own_file(path) for path in files.get(package, []))
+
+        used, reached = set(), set()
+        todo = []
+
+        def use(package):
+            if package in used:
+                return
+            used.add(package)
+            # Its data and modules in subfolders come along; its libraries and programs when reached
+            todo.extend(path for path in files.get(package, []) if not own_file(path))
+            # And what it depends on that has no libraries or programs of its own
+            for group in packages.get(package, ([], []))[0]:
+                for alt in group:
+                    dep = next(iter([alt] if alt in scope else providers.get(alt, [])), None)
+                    if dep and dep in scope:
+                        if not has_own(dep):
+                            use(dep)
+                        break
+
+        for package in read_lines(os.path.join(work, f"{p}.roots")):
+            use(package)
+            todo.extend(files.get(package, []))
+        todo.extend(read_lines(os.path.join(work, f"{p}.pip.files")))
+        while todo:
+            path = todo.pop()
+            if path in reached or pruned.match(path):
+                continue
+            reached.add(path)
+            if path in owner:
+                use(owner[path])
+            full = os.path.join(prefix, path)
+            if os.path.islink(full):
+                target = os.path.relpath(os.path.realpath(full), os.path.realpath(prefix))
+                if not target.startswith(".."):
+                    todo.append(target)
+                continue
+            if not os.path.isfile(full):
+                continue
+            needed = elf_needed(full)
+            if needed is not None:
+                # What Android has (libc.so, liblog.so, ...) isn't in the prefix
+                todo.extend(libs[name] for name in needed if name in libs)
+                continue
+            with open(full, "rb") as f:
+                first = f.readline(256)
+            if first.startswith(b"#!"):
+                # "#!$PREFIX/bin/python3" or "#!$PREFIX/bin/env python3"
+                words = first[2:].decode("utf-8", "replace").split()
+                if words and words[0].startswith(prefix + "/bin/"):
+                    program = words[0][len(prefix) + 1:]
+                    if program == "bin/env" and len(words) > 1:
+                        program = "bin/" + words[1]
+                    todo.append(program)
+
+        with open(os.path.join(work, f"{p}.apt"), "w", encoding="utf-8") as f:
+            f.write("".join(f"{n}\n" for n in sorted(closure[p] & used)))
+        used_anywhere |= reached
+        candidates |= {path for package in used for path in files.get(package, []) if own_file(path)}
+
+    with open(os.path.join(work, "unused.txt"), "w", encoding="utf-8") as f:
+        f.write("".join(f"{path}\n" for path in sorted(candidates - used_anywhere)))
+
+
 if __name__ == "__main__":
     command, *args = sys.argv[1:]
-    {"split": split, "reachable": reachable}[command](*args)
+    {"split": split, "reachable": reachable, "linked": linked}[command](*args)

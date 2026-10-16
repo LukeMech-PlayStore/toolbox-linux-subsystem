@@ -15,11 +15,11 @@ abis:
 # PRoot and its loaders, cross-compiled with the NDK (proot/build.sh); the workflow runs when this
 # section, abis (or proot/) changes
 proot:
-  talloc: "2.5.0" # Statically linked
   # A tag, a branch name (master) or a commit hash; the loaders are built from the same source, so
   # they always match
   repo: termux/proot
   ref: v5.1.107.96
+  talloc: "2.5.0" # Statically linked
   android_api: 29 # Android 10
 
 # The rootfs comes in parts, shipped in the app's jniLibs (lib*.so, so Android unpacks them with it):
@@ -28,8 +28,11 @@ proot:
 #   along with the tool's pages) and unpacked when it's first used, and deleted with its data
 # Each lists Termux packages and pip packages: they and their dependencies end up in it, minus
 # what the parts it builds on (requires, and always the base) have, and minus what it leaves out
-# (exclude: those packages, with what only they need). What two extensions both need goes to the
-# one they both build on (the base if nothing else).
+# (exclude: those packages, with what only they need). Of the dependencies, only what its packages
+# use: the libraries they link, the interpreters their scripts run and the data those come with
+# (Termux's packages depend on a lot only their tools or their building need, see rootfs/parts.py
+# linked). What two extensions both need goes to the one they both build on (the base if nothing
+# else).
 # Each part has its own version: a release keeps a part's previous archive (and version) as long as
 # what goes into it is the same, or its files come out the same (see rootfs/release.py), so the app
 # only updates what changed.
@@ -39,7 +42,12 @@ packages:
       - dash # $PREFIX/bin/sh for anything shelling out (Android's sh can't run under proot on Samsung)
 
   extensions:
+    # Libraries Python and FFmpeg both link (OpenSSL, libffi, zlib, ...): no packages of its own, but
+    # what the parts building on it share goes here instead of into the base everyone gets
+    libs: {}
+
     python: # Python, for the packages running on it
+      requires: [libs]
       packages:
         - python
 
@@ -62,26 +70,28 @@ packages:
         - CurrencyConverter
 
     ffmpeg: # Video encoder, and yt-dlp's (merging, remuxing, audio conversion, thumbnails)
-      # Termux's FFmpeg needs Python too (libplacebo's): building on it, Python and its libraries stay
-      # there instead of going to the base (see parts.py)
-      requires: [python]
+      # Not Python: GLib's and libplacebo's packages depend on it, but nothing FFmpeg links does
+      requires: [libs]
       packages:
         # Termux's, with its video encoders (x264, x265, VP9, AV1) and filters
         - ffmpeg
-      # Not exported, with what only it needs (LLVM): Mesa's software Vulkan driver, only ever loaded
-      # when a filter asks for Vulkan (libplacebo links Android's own libvulkan.so) - most of the size
+      # Not exported, with what only they need
       exclude:
-        - mesa-vulkan-icd-swrast
+        # Mesa's software Vulkan driver, only ever loaded when a filter asks for Vulkan
+        - mesa-vulkan-icd-swrast # ~178 MB installed (13 MB + libllvm 166 MB)
+        # Fontconfig's DejaVu fonts: it finds Android's in /system/fonts (bound in proot)
+        - ttf-dejavu # ~10 MB
 
     ytdlp: # Media downloader
-      requires: [ffmpeg]
+      requires: [python, ffmpeg]
       packages:
         - yt-dlp
 
   # For every pip install
   pip_options: --no-binary pillow # Built against the libs above only (Termux's python-pillow pulls in a lot more)
 
-  # Build-only dependencies
-  # These are installed for setup/pip, but their files are not exported (python-pip is added when pip has packages).
+  # Build-only dependencies: installed when pip has packages, never exported (left out of every part,
+  # with what only they need, even when a package depends on them, as python-yt-dlp on python-pip)
   build_packages:
+    - python-pip
     - build-essential # Clang, Make, pkg-config

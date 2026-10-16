@@ -18,7 +18,8 @@ def closure(reqs):
     while todo:
         req = todo.pop()
         key = (canonicalize_name(req.name), frozenset(req.extras))
-        if key in seen:
+        # pip only installs them (a build package, see config.yaml)
+        if key in seen or key[0] == "pip":
             continue
         seen.add(key)
         dist = distribution(req.name)
