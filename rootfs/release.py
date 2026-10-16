@@ -30,7 +30,7 @@ SHARED_SCRIPTS = ["build.sh", "parts.py", "pip-files.py", "rebuild-16k.sh", "ter
 
 
 def lib_of(part):
-    return "librootfs.tar.xz.so" if part == "base" else f"libpackage-{part}.tar.xz.so"
+    return f"libpackage-{part}.tar.xz.so"
 
 
 def read_lines(path):
@@ -81,8 +81,8 @@ def fingerprint(part, config, manifest):
     return h.hexdigest()
 
 
-# Differs in every release's base, the rest being the same (see build.sh)
-OWN_VERSION = {"base": {"etc/image-version"}}
+# Differs in every release's core, the rest being the same (see build.sh)
+OWN_VERSION = {"core": {"etc/image-version"}}
 
 
 def content(archive, part):
@@ -113,8 +113,8 @@ def merge(tag, config_path, current, manifests, previous, out):
     config = full
     # The build's (termux) arch -> Android ABI (jniLibs folder)
     abis = {v["termux"]: abi for abi, v in full["abis"].items()}
-    extensions = {name: part for name, part in (config.get("packages") or {}).items() if name != "base"}
-    parts = ["base"] + list(extensions)
+    extensions = {name: part for name, part in (config.get("packages") or {}).items() if name != "core"}
+    parts = ["core"] + list(extensions)
 
     built = {}
     for arch in abis:
@@ -167,7 +167,7 @@ def merge(tag, config_path, current, manifests, previous, out):
             changed.append(part)
             print(f"{part}: {prev['version'] if prev else 'new'} -> {tag}")
         # What it builds on is the config's, always (it's no archive's)
-        entry["requires"] = [] if part == "base" else (extensions[part] or {}).get("requires") or []
+        entry["requires"] = [] if part == "core" else (extensions[part] or {}).get("requires") or []
         entry["lib"] = lib
         index[part] = entry
 

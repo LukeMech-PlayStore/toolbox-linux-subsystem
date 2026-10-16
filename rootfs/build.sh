@@ -1,7 +1,7 @@
 #!/data/data/com.termux/files/usr/bin/bash
 # Runs inside termux/termux-docker (as its "system" user):
 #   bash build.sh <image version> <config.yaml as JSON>
-# Installs everything config.yaml asks for and leaves the rootfs parts in ~/rootfs/<part> (base
+# Installs everything config.yaml asks for and leaves the rootfs parts in ~/rootfs/<part> (core
 # and the others), each holding only its packages' files (with their dependencies, minus what
 # the parts it builds on have, and minus what its packages don't use of them) and what pip added
 # for it - not the rest of the Termux bootstrap (apt, bash, ...), nor the build packages. The
@@ -60,8 +60,8 @@ cfg() { jq -r "$@" "$WORK/config.json"; }
 part_of() { echo ".packages[\"$1\"]"; }
 list_of() { cfg "($(part_of "$1") // {}) | (.$2 // [])[]"; }
 
-# The base first, then the parts building on it (listed before what builds on them)
-mapfile -t PARTS < <(echo base; cfg '(.packages // {}) | keys_unsorted[] | select(. != "base")')
+# The core first, then the parts building on it (listed before what builds on them)
+mapfile -t PARTS < <(echo core; cfg '(.packages // {}) | keys_unsorted[] | select(. != "core")')
 mapfile -t PKGS < <(for p in "${PARTS[@]}"; do list_of "$p" packages; done | sort -u)
 mapfile -t PIP < <(for p in "${PARTS[@]}"; do list_of "$p" pip; done)
 # The libraries the pip packages are compiled against
@@ -204,7 +204,7 @@ for p in "${PARTS[@]}"; do
     [ -n "$found" ] || { echo "::error::${f#"$ROOT/"} runs $interpreter, which isn't in $p or what it builds on"; exit 1; }
   done
 done
-[ -e "$ROOT/base/usr/bin/sh" ] || ln -s dash "$ROOT/base/usr/bin/sh"
+[ -e "$ROOT/core/usr/bin/sh" ] || ln -s dash "$ROOT/core/usr/bin/sh"
 
 # Each extension lists its files, for the app to delete it again
 for p in "${PARTS[@]:1}"; do
@@ -213,7 +213,7 @@ for p in "${PARTS[@]:1}"; do
   mv "$WORK/$p.list" "$ROOT/$p/etc/extensions/$p.files"
 done
 
-# The base's version, which the app keeps once it's unpacked; what the parts are (versions, sizes,
+# The core's version, which the app keeps once it's unpacked; what the parts are (versions, sizes,
 # what they hold) the release tells the app (parts.json, see rootfs/release.py)
-mkdir -p "$ROOT/base/etc" "$ROOT/base/root" "$ROOT/base/tmp" "$ROOT/base/usr/tmp"
-echo "$IMAGE_VERSION" > "$ROOT/base/etc/image-version"
+mkdir -p "$ROOT/core/etc" "$ROOT/core/root" "$ROOT/core/tmp" "$ROOT/core/usr/tmp"
+echo "$IMAGE_VERSION" > "$ROOT/core/etc/image-version"

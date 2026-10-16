@@ -33,13 +33,13 @@ import sys
 def load(path):
     with open(path, encoding="utf-8") as f:
         config = json.load(f)
-    # config.yaml's packages: the base and the parts building on it
+    # config.yaml's packages: the core and the parts building on it
     packages = config.get("packages") or {}
-    if "base" not in packages:
-        sys.exit("::error::config.yaml has no base under packages")
-    extensions = {name: part for name, part in packages.items() if name != "base"}
-    parts = ["base"] + list(extensions)
-    requires = {"base": []}
+    if "core" not in packages:
+        sys.exit("::error::config.yaml has no core under packages")
+    extensions = {name: part for name, part in packages.items() if name != "core"}
+    parts = ["core"] + list(extensions)
+    requires = {"core": []}
     for name, ext in extensions.items():
         requires[name] = (ext or {}).get("requires") or []
         for r in requires[name]:
@@ -50,9 +50,9 @@ def load(path):
 
 
 def ancestors(part, requires):
-    if part == "base":
+    if part == "core":
         return set()
-    seen = {"base"}
+    seen = {"core"}
     todo = list(requires[part])
     while todo:
         p = todo.pop()

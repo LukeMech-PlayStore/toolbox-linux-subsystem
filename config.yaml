@@ -12,8 +12,8 @@ abis:
   x86:         { proot: x86,    termux: i686,    runner: ubuntu-latest }
   x86_64:      { proot: x86_64, termux: x86_64,  runner: ubuntu-latest }
 
-# PRoot and its loaders, cross-compiled with the NDK (proot/build.sh), shipped with the base (the app's
-# rootfs module)
+# PRoot and its loaders, cross-compiled with the NDK (proot/build.sh), shipped with the core (the app's
+# core module)
 proot:
   # A tag, a branch name (master), a commit hash, or latest (its newest tag, as each build finds it);
   # the loaders are built from the same source, so they always match
@@ -25,13 +25,13 @@ proot:
 # The rootfs, as a tree of parts shipped in the app's jniLibs (lib*.so, so Android unpacks them with
 # it), each installed from Play (with the pages of the tools on it) and unpacked when a tool first
 # needs it, and deleted (its module uninstalled) once none does:
-# - base (librootfs.tar.xz.so, with PRoot): what every other part builds on (dash, and what several
+# - core (libpackage-core.tar.xz.so, with PRoot): what every other part builds on (dash, and what several
 #   parts link, e.g. Python's and FFmpeg's OpenSSL and zlib)
 # - the others (libpackage-<name>.tar.xz.so): what tools run on
 #
 # A part says only what it is for; where its dependencies go follows from the tree:
 # - packages / pip: the Termux and pip packages it's for (its own programs, data and modules)
-# - requires: the parts it builds on (the base, or parts building on it), listed before it; the app
+# - requires: the parts it builds on (the core, or parts building on it), listed before it; the app
 #   installs those first, and lists them with it
 # - pip_libs: Termux libraries its pip packages are compiled against (installed before pip)
 # - pip_options: options for pip installing them
@@ -42,17 +42,17 @@ proot:
 # interpreters their scripts run, the data those come with (rootfs/parts.py linked). Termux's
 # packages depend on a lot only their tools or their building need; that stays out. What several
 # parts use goes to the one they all build on: Python and FFmpeg both link zlib and OpenSSL, so
-# those are in the base. In the app, a part lists everything it holds, each with its version.
+# those are in the core. In the app, a part lists everything it holds, each with its version.
 # Each part has its own version: a release keeps a part's previous archive (and version) as long as
 # what goes into it is the same, or its files come out the same (see rootfs/release.py), so the app
 # only updates what changed.
 packages:
-  base:
+  core:
     packages:
       - dash # $PREFIX/bin/sh for anything shelling out (Android's sh can't run under proot on Samsung)
 
   python: # Python, for the tools running on it
-    requires: [base]
+    requires: [core]
     packages:
       - python
 
@@ -70,13 +70,13 @@ packages:
     pip_options: --no-binary pillow
 
   exiftool: # Metadata editor
-    requires: [base]
+    requires: [core]
     packages:
       - exiftool
 
   ffmpeg: # Video encoder, and yt-dlp's (merging, remuxing, audio conversion, thumbnails)
     # Not on Python: GLib's and libplacebo's packages depend on it, but nothing FFmpeg links does
-    requires: [base]
+    requires: [core]
     packages:
       - ffmpeg
     # Built with Termux's recipe (its source, patches and options: x264, x265, VP9, SVT-AV1, dav1d,

@@ -102,12 +102,12 @@ jobs:
           docker cp "rootfs:$HOME_DIR/out/." manifests
           docker rm rootfs
 
-          # One archive per part: the base and an extension per package (see config.yaml). Each is
+          # One archive per part: the core and an extension per package (see config.yaml). Each is
           # smaller than one -9e block (192 MB), so xz can't split it over threads: the parts are
           # compressed side by side instead
           for dir in stage/*/; do
             part=$(basename "$dir")
-            if [ "$part" = base ]; then lib=librootfs.tar.xz.so; else lib="libpackage-$part.tar.xz.so"; fi
+            lib="libpackage-$part.tar.xz.so"
             tar --owner=0 --group=0 --numeric-owner -cf - -C "$dir" . | xz -9e -T1 -c > "out/$ARCH/$lib" &
             mv "manifests/manifest-$part.txt" "out/manifest-$part-$ARCH.txt"
           done
@@ -232,7 +232,7 @@ jobs:
         id: proot
         run: |
           # Each ABI's jniLibs folder gets PRoot and its loaders, as built now: the app takes them from
-          # here, with the base (its rootfs module). Changed from the previous release's: a release is needed
+          # here, with the core (its module). Changed from the previous release's: a release is needed
           changed=false
           for dir in proot_out/*/; do
             abi=$(basename "$dir")
@@ -247,9 +247,9 @@ jobs:
       - name: Generate Changelog
         id: changelog
         run: |
-          # Parts as built, the base first
+          # Parts as built, the core first
           PARTS=$(ls manifests/manifest-*.txt | sed 's|.*/manifest-||; s|\.txt$||' \
-            | awk '{ print ($0 == "base" ? 0 : 1), $0 }' | sort | cut -d' ' -f2)
+            | awk '{ print ($0 == "core" ? 0 : 1), $0 }' | sort | cut -d' ' -f2)
 
           # "name-1.2" (Termux) or "name==1.2" (pip), maybe with " @arch", as "name[ (arch)] version"
           parse_line() {
@@ -297,7 +297,7 @@ jobs:
             unset OLD NEW
 
             if [ -n "$ROWS" ]; then
-              if [ "$part" = base ]; then lib=librootfs.tar.xz.so; else lib="libpackage-$part.tar.xz.so"; fi
+              lib="libpackage-$part.tar.xz.so"
               FINAL_LOG+="### 📦 $part (\`$lib\`)"$'\n\n'"| ● | Package | Old | New |"$'\n'"|:--:|:--------|:----|:-----|"$'\n'"$ROWS"$'\n\n'
             fi
           done
