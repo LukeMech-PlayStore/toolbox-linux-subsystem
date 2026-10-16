@@ -71,8 +71,9 @@ def read_file(path):
 def fingerprint(part, config, manifest):
     """What decides a part's files: same fingerprint, same archive."""
     h = hashlib.sha256()
-    entry = config.get("base") if part == "base" else (config.get("extensions") or {}).get(part)
-    shared = {k: v for k, v in config.items() if k not in ("base", "extensions")}
+    entry = (config.get("packages") or {}).get(part)
+    # What every part is built with (build_packages; not the ABIs or PRoot, nothing of a part)
+    shared = {k: v for k, v in config.items() if k not in ("packages", "abis", "proot")}
     h.update(json.dumps({"part": part, "entry": entry or {}, "shared": shared}, sort_keys=True).encode())
     h.update(b"\0manifest\0" + manifest.encode())
     for script in SHARED_SCRIPTS + ([entry["script"]] if entry and entry.get("script") else []):
@@ -109,10 +110,10 @@ def content(archive, part):
 def merge(tag, config_path, current, manifests, previous, out):
     with open(config_path, encoding="utf-8") as f:
         full = json.load(f)
-    config = full["packages"]
+    config = full
     # The build's (termux) arch -> Android ABI (jniLibs folder)
     abis = {v["termux"]: abi for abi, v in full["abis"].items()}
-    extensions = config.get("extensions") or {}
+    extensions = {name: part for name, part in (config.get("packages") or {}).items() if name != "base"}
     parts = ["base"] + list(extensions)
 
     built = {}

@@ -77,7 +77,7 @@ jobs:
           ARCH: ${{ matrix.arch }}
         run: |
           mkdir -p "out/$ARCH" manifests
-          CONFIG=$(yq -o=json -I=0 '.packages' config.yaml)
+          CONFIG=$(yq -o=json -I=0 '.' config.yaml)
 
           # Privileged: ARM images need personality(), even on ARM hosts (see termux-docker's README)
           docker run --privileged --name rootfs -v "$PWD/rootfs:/build:ro" "$IMAGE" \

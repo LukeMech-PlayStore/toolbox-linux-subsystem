@@ -33,17 +33,19 @@ import sys
 def load(path):
     with open(path, encoding="utf-8") as f:
         config = json.load(f)
-    extensions = config.get("extensions") or {}
+    # config.yaml's packages: the base and the parts building on it
+    packages = config.get("packages") or {}
+    if "base" not in packages:
+        sys.exit("::error::config.yaml has no base under packages")
+    extensions = {name: part for name, part in packages.items() if name != "base"}
     parts = ["base"] + list(extensions)
     requires = {"base": []}
     for name, ext in extensions.items():
-        if name == "base":
-            sys.exit("::error::An extension can't be called base")
         requires[name] = (ext or {}).get("requires") or []
         for r in requires[name]:
-            # In order: what an extension builds on is set up (and checked) before it
+            # In order: what a part builds on is set up (and checked) before it
             if r not in parts[: parts.index(name)]:
-                sys.exit(f"::error::{name} requires {r}, which isn't an extension listed before it")
+                sys.exit(f"::error::{name} requires {r}, which isn't a part listed before it")
     return extensions, parts, requires
 
 

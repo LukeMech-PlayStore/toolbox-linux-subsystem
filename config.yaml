@@ -22,17 +22,17 @@ proot:
   talloc: "2.5.0" # Statically linked
   android_api: 29 # Android 10
 
-# The rootfs, as a tree of parts shipped in the app's jniLibs (lib*.so, so Android unpacks them with it):
-# - base (librootfs.tar.xz.so): what everything builds on (dash, and what several parts link, e.g.
-#   Python's and FFmpeg's OpenSSL and zlib), installed (from Play, with PRoot) along with the first
-#   tool on Linux, and unpacked before it
-# - extensions (libpackage-<name>.tar.xz.so): what a tool runs on, installed (from Play, along with
-#   the tool's pages) and unpacked when it's first used, and deleted with its data
+# The rootfs, as a tree of parts shipped in the app's jniLibs (lib*.so, so Android unpacks them with
+# it), each installed from Play (with the pages of the tools on it) and unpacked when a tool first
+# needs it, and deleted (its module uninstalled) once none does:
+# - base (librootfs.tar.xz.so, with PRoot): what every other part builds on (dash, and what several
+#   parts link, e.g. Python's and FFmpeg's OpenSSL and zlib)
+# - the others (libpackage-<name>.tar.xz.so): what tools run on
 #
 # A part says only what it is for; where its dependencies go follows from the tree:
 # - packages / pip: the Termux and pip packages it's for (its own programs, data and modules)
-# - requires: the extensions it builds on (always the base too), listed before it; the app
-#   installs those first
+# - requires: the parts it builds on (always the base too), listed before it; the app installs
+#   those first
 # - pip_libs: Termux libraries its pip packages are compiled against (installed before pip)
 # - pip_options: options for pip installing them
 # - rebuild: Termux packages built with Termux's recipe of them, without some of its configure
@@ -51,86 +51,83 @@ packages:
     packages:
       - dash # $PREFIX/bin/sh for anything shelling out (Android's sh can't run under proot on Samsung)
 
-  extensions:
-    python: # Python, for the tools running on it
-      packages:
-        - python
+  python: # Python, for the tools running on it
+    packages:
+      - python
 
-    ffmpeg: # Video encoder, and yt-dlp's (merging, remuxing, audio conversion, thumbnails)
-      # Not on Python: GLib's and libplacebo's packages depend on it, but nothing FFmpeg links does
-      packages:
-        - ffmpeg
-      # Built with Termux's recipe (its source, patches and options: x264, x265, VP9, SVT-AV1, dav1d,
-      # Opus, MP3, Vorbis, WebP, subtitles, MediaCodec), without what the tools don't use: Termux's
-      # links every one of these, so it can't start without them (~35 MB)
-      rebuild:
-        ffmpeg:
-          drop:
-            - --enable-libaom # More AV1 encoders: SVT-AV1 is the one used
-            - --enable-librav1e
-            - --enable-libplacebo # Vulkan filters (no Vulkan under proot), with glslang
-            - --enable-vulkan
-            - --enable-opencl
-            - --enable-libjxl # JPEG XL
-            - --enable-librubberband # Audio filters nothing uses
-            - --enable-libmysofa
-            - --enable-libbs2b
-            - --enable-libbluray # Discs, tracker and game music
-            - --enable-libdvdnav
-            - --enable-libdvdread
-            - --enable-libopenmpt
-            - --enable-libgme
-            - --enable-libssh # Network protocols nothing uses
-            - --enable-libsrt
-            - --enable-libzmq
-            - --enable-libxcb # X11 screen capture
-            - --enable-libxcb-shm
-            - --enable-libxcb-xfixes
-            - --enable-libxcb-shape
-            - --enable-indev=xcbgrab
-            - --enable-libv4l2 # Cameras through V4L2
-            - --enable-libvmaf # Quality metrics
-            - --enable-libxvid # Old or rare encoders (FFmpeg decodes these itself)
-            - --enable-libtheora
-            - --enable-libopencore-amrnb
-            - --enable-libopencore-amrwb
-            - --enable-libvo-amrwbenc
-          # Not in the recipe (Termux's build host has it): FFmpeg's x86 assembly
-          build_packages: [nasm]
-      exclude:
-        # Fontconfig's DejaVu fonts: it finds Android's in /system/fonts (bound in proot)
-        - ttf-dejavu # ~10 MB
+  # Small tools on Python, together (each would be a module of its own otherwise): the QR
+  # generator and the currency converter, and the next ones that light
+  pypkgs:
+    requires: [python]
+    pip:
+      - qrcode[pil] # QR generator
+      - CurrencyConverter # Currency converter
+    # Pillow is built against these only (Termux's python-pillow pulls in a lot more)
+    pip_libs:
+      - libjpeg-turbo
+      - zlib
+    pip_options: --no-binary pillow
 
-    exiftool: # Metadata editor
-      packages:
-        - exiftool
+  exiftool: # Metadata editor
+    packages:
+      - exiftool
 
-    qrcode: # QR generator
-      requires: [python]
-      pip:
-        - qrcode[pil]
-      # Pillow is built against these only (Termux's python-pillow pulls in a lot more)
-      pip_libs:
-        - libjpeg-turbo
-        - zlib
-      pip_options: --no-binary pillow
+  ffmpeg: # Video encoder, and yt-dlp's (merging, remuxing, audio conversion, thumbnails)
+    # Not on Python: GLib's and libplacebo's packages depend on it, but nothing FFmpeg links does
+    packages:
+      - ffmpeg
+    # Built with Termux's recipe (its source, patches and options: x264, x265, VP9, SVT-AV1, dav1d,
+    # Opus, MP3, Vorbis, WebP, subtitles, MediaCodec), without what the tools don't use: Termux's
+    # links every one of these, so it can't start without them (~35 MB)
+    rebuild:
+      ffmpeg:
+        drop:
+          - --enable-libaom # More AV1 encoders: SVT-AV1 is the one used
+          - --enable-librav1e
+          - --enable-libplacebo # Vulkan filters (no Vulkan under proot), with glslang
+          - --enable-vulkan
+          - --enable-opencl
+          - --enable-libjxl # JPEG XL
+          - --enable-librubberband # Audio filters nothing uses
+          - --enable-libmysofa
+          - --enable-libbs2b
+          - --enable-libbluray # Discs, tracker and game music
+          - --enable-libdvdnav
+          - --enable-libdvdread
+          - --enable-libopenmpt
+          - --enable-libgme
+          - --enable-libssh # Network protocols nothing uses
+          - --enable-libsrt
+          - --enable-libzmq
+          - --enable-libxcb # X11 screen capture
+          - --enable-libxcb-shm
+          - --enable-libxcb-xfixes
+          - --enable-libxcb-shape
+          - --enable-indev=xcbgrab
+          - --enable-libv4l2 # Cameras through V4L2
+          - --enable-libvmaf # Quality metrics
+          - --enable-libxvid # Old or rare encoders (FFmpeg decodes these itself)
+          - --enable-libtheora
+          - --enable-libopencore-amrnb
+          - --enable-libopencore-amrwb
+          - --enable-libvo-amrwbenc
+        # Not in the recipe (Termux's build host has it): FFmpeg's x86 assembly
+        build_packages: [nasm]
+    exclude:
+      # Fontconfig's DejaVu fonts: it finds Android's in /system/fonts (bound in proot)
+      - ttf-dejavu # ~10 MB
 
-    currencyconverter: # Currency converter
-      requires: [python]
-      pip:
-        - CurrencyConverter
+  ytdlp: # Media downloader
+    requires: [python, ffmpeg]
+    packages:
+      - yt-dlp
+    exclude:
+      # Optional to yt-dlp (it has its own AES, and asks for no brotli then)
+      - python-pycryptodomex
+      - python-brotli
 
-    ytdlp: # Media downloader
-      requires: [python, ffmpeg]
-      packages:
-        - yt-dlp
-      exclude:
-        # Optional to yt-dlp (it has its own AES, and asks for no brotli then)
-        - python-pycryptodomex
-        - python-brotli
-
-  # Only for building: installed when pip has packages, never in a part (left out with what only
-  # they need, even as a dependency, as python-yt-dlp's of python-pip)
-  build_packages:
-    - python-pip
-    - build-essential # Clang, Make, pkg-config
+# Only for building: installed when pip has packages, never in a part (left out with what only
+# they need, even as a dependency, as python-yt-dlp's of python-pip)
+build_packages:
+  - python-pip
+  - build-essential # Clang, Make, pkg-config

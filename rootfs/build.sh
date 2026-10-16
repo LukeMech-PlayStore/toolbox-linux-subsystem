@@ -2,7 +2,7 @@
 # Runs inside termux/termux-docker (as its "system" user):
 #   bash build.sh <image version> <config.yaml as JSON>
 # Installs everything config.yaml asks for and leaves the rootfs parts in ~/rootfs/<part> (base
-# and the extensions), each holding only its packages' files (with their dependencies, minus what
+# and the others), each holding only its packages' files (with their dependencies, minus what
 # the parts it builds on have, and minus what its packages don't use of them) and what pip added
 # for it - not the rest of the Termux bootstrap (apt, bash, ...), nor the build packages. The
 # Termux prefix goes to usr/; the app binds it back to $PREFIX inside proot.
@@ -57,10 +57,11 @@ apt-get install -y jq
 echo "$CONFIG" > "$WORK/config.json"
 cfg() { jq -r "$@" "$WORK/config.json"; }
 # Where a part's settings are in the config
-part_of() { if [ "$1" = base ]; then echo '.base'; else echo ".extensions[\"$1\"]"; fi; }
+part_of() { echo ".packages[\"$1\"]"; }
 list_of() { cfg "($(part_of "$1") // {}) | (.$2 // [])[]"; }
 
-mapfile -t PARTS < <(echo base; cfg '(.extensions // {}) | keys_unsorted[]')
+# The base first, then the parts building on it (listed before what builds on them)
+mapfile -t PARTS < <(echo base; cfg '(.packages // {}) | keys_unsorted[] | select(. != "base")')
 mapfile -t PKGS < <(for p in "${PARTS[@]}"; do list_of "$p" packages; done | sort -u)
 mapfile -t PIP < <(for p in "${PARTS[@]}"; do list_of "$p" pip; done)
 # The libraries the pip packages are compiled against
