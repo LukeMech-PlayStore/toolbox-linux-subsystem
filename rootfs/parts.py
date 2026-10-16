@@ -14,9 +14,9 @@
   parts.py linked <prefix> <dpkg status> <files.tsv> <prune regex> <config.json> <work dir>
       What the parts' own packages really use of their dependencies (Termux's declare a lot only
       their tools, or their building, need: FFmpeg's pull in libtiff, X11, cairo, Python, ...).
-      A part uses all files of its own packages (<part>.roots) and what pip added for it
-      (<part>.pip.files), what those link (DT_NEEDED, all the way down) and the interpreters its
-      scripts start with. A dependency package without libraries or programs of its own (data,
+      A part uses its own packages (<part>.roots: their programs and data, their libraries when
+      linked) and what pip added for it (<part>.pip.files), what those link (DT_NEEDED, all the
+      way down) and the interpreters its scripts start with. A dependency package without libraries or programs of its own (data,
       fonts, modules in a subfolder of lib/) comes with the used one depending on it. So:
       - <part>.apt is narrowed down to the packages it uses
       - <work dir>/unused.txt gets the libraries and programs (lib/*, bin/* of a dependency) no
@@ -253,7 +253,9 @@ def linked(prefix, status, files_tsv, prune, config_path, work):
 
         for package in read_lines(os.path.join(work, f"{p}.roots")):
             use(package)
-            todo.extend(files.get(package, []))
+            # Its programs too; its libraries only when linked (libjpeg-turbo's libjpeg for Pillow,
+            # not libturbojpeg)
+            todo.extend(path for path in files.get(package, []) if path.startswith("bin/"))
         todo.extend(read_lines(os.path.join(work, f"{p}.pip.files")))
         while todo:
             path = todo.pop()
