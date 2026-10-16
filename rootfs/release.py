@@ -152,6 +152,10 @@ def merge(tag, config_path, current, manifests, previous, out):
             entry = dict(prev)
             # Known by what goes into it now, for the next release
             entry["hash"] = fp
+            # What it holds as this build lists it (the list isn't in the archive: e.g. now all its
+            # packages, where earlier releases listed only its own); sizes stay the archive's
+            entry["abis"] = {abi: {**prev["abis"][abi], "components": built[arch][part]["components"]}
+                             for arch, abi in abis.items()}
             print(f"{part}: {'same files' if same_files else 'unchanged'}, keeps {prev['version']}")
         else:
             entry = {
