@@ -86,17 +86,23 @@ OWN_VERSION = {"base": {"etc/image-version"}}
 
 def content(archive, part):
     """What an archive unpacks to: its files, links and folders with their modes (not their times)."""
-    h = hashlib.sha256()
-    with tarfile.open(archive, "r:xz") as tar:
-        for m in sorted(tar.getmembers(), key=lambda m: m.name):
+    # Read once, front to back (a stream: going back in xz decompresses again from the start), each
+    # member hashed as it comes; in name order after, as the archive's order isn't the files'
+    members = {}
+    with tarfile.open(archive, "r|xz") as tar:
+        for m in tar:
             name = m.name.removeprefix("./")
             if name in OWN_VERSION.get(part, ()):
                 continue
-            h.update(f"\0{name}\0{m.type!r}\0{m.mode:o}\0{m.linkname}\0".encode())
+            h = hashlib.sha256(f"\0{name}\0{m.type!r}\0{m.mode:o}\0{m.linkname}\0".encode())
             if m.isfile():
                 f = tar.extractfile(m)
                 for chunk in iter(lambda: f.read(1 << 20), b""):
                     h.update(chunk)
+            members[name] = h.digest()
+    h = hashlib.sha256()
+    for name in sorted(members):
+        h.update(members[name])
     return h.hexdigest()
 
 
