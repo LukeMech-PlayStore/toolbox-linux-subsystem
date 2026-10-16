@@ -218,6 +218,12 @@ def linked(prefix, status, files_tsv, prune, config_path, work):
             if (os.path.islink(full) or os.path.isfile(full)) and not pruned.match(path):
                 files.setdefault(package, []).append(path)
     closure = {p: read_lines(os.path.join(work, f"{p}.apt")) for p in parts}
+    # Every part's libraries: one linked from outside a part's tree would be missing at runtime
+    # (what's left out on purpose isn't any part's: Android's own libraries, an excluded package)
+    in_parts = set().union(*closure.values())
+    any_lib = {path[4:]: package for package, paths in files.items() if package in in_parts
+               for path in paths if path.startswith("lib/") and own_file(path)}
+    errors = []
 
     used_anywhere, candidates = set(), set()
     for p in parts:
@@ -276,6 +282,9 @@ def linked(prefix, status, files_tsv, prune, config_path, work):
             if needed is not None:
                 # What Android has (libc.so, liblog.so, ...) isn't in the prefix
                 todo.extend(libs[name] for name in needed if name in libs)
+                errors.extend(f"::error::{path} ({p}) links {name}, which is {any_lib[name]}'s: not in {p} "
+                              f"or what it builds on (built against what another part brought? see pip_libs)"
+                              for name in needed if name not in libs and name in any_lib)
                 continue
             with open(full, "rb") as f:
                 first = f.readline(256)
@@ -293,6 +302,8 @@ def linked(prefix, status, files_tsv, prune, config_path, work):
         used_anywhere |= reached
         candidates |= {path for package in used for path in files.get(package, []) if own_file(path)}
 
+    if errors:
+        sys.exit("\n".join(sorted(set(errors))))
     with open(os.path.join(work, "unused.txt"), "w", encoding="utf-8") as f:
         f.write("".join(f"{path}\n" for path in sorted(candidates - used_anywhere)))
 

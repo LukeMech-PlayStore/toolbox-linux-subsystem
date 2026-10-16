@@ -61,13 +61,22 @@ part_of() { if [ "$1" = base ]; then echo '.base'; else echo ".extensions[\"$1\"
 list_of() { cfg "($(part_of "$1") // {}) | (.$2 // [])[]"; }
 
 mapfile -t PARTS < <(echo base; cfg '(.extensions // {}) | keys_unsorted[]')
-# The parts' packages and the libraries their pip packages are compiled against
-mapfile -t PKGS < <(for p in "${PARTS[@]}"; do list_of "$p" packages; list_of "$p" pip_libs; done | sort -u)
+mapfile -t PKGS < <(for p in "${PARTS[@]}"; do list_of "$p" packages; done | sort -u)
 mapfile -t PIP < <(for p in "${PARTS[@]}"; do list_of "$p" pip; done)
+# The libraries the pip packages are compiled against
+mapfile -t PIP_LIBS < <(for p in "${PARTS[@]}"; do list_of "$p" pip_libs; done | sort -u)
 # Installed for pip, never exported (left out of every part, with what only they need)
 mapfile -t BUILD_PKGS < <(cfg '(.build_packages // [])[]')
 read -r -a PIP_OPTIONS <<< "$(for p in "${PARTS[@]}"; do cfg "$(part_of "$p").pip_options // empty"; done | xargs)"
 
+# pip first, with only its libraries and the build packages there: a build picks up whatever
+# optional library it finds (Pillow linked FFmpeg's libtiff), which its part wouldn't have
+if [ ${#PIP[@]} -gt 0 ]; then
+  apt-get install -y "${BUILD_PKGS[@]}" "${PIP_LIBS[@]}"
+  # Termux builds with 16 KB pages in mind, make sure locally built modules are too
+  LDFLAGS="-Wl,-z,max-page-size=16384" pip install --no-cache-dir --no-compile --break-system-packages \
+    "${PIP_OPTIONS[@]}" "${PIP[@]}"
+fi
 apt-get install -y "${PKGS[@]}"
 # A part's packages (or <key>'s, e.g. pip_libs) as installed: a name another package provides (as
 # apt took it, e.g. yt-dlp for python-yt-dlp) is that package
@@ -83,12 +92,6 @@ packages_of() {
     fi
   done
 }
-if [ ${#PIP[@]} -gt 0 ]; then
-  apt-get install -y "${BUILD_PKGS[@]}"
-  # Termux builds with 16 KB pages in mind, make sure locally built modules are too
-  LDFLAGS="-Wl,-z,max-page-size=16384" pip install --no-cache-dir --no-compile --break-system-packages \
-    "${PIP_OPTIONS[@]}" "${PIP[@]}"
-fi
 
 # What each part may need: its packages and pip_libs with everything they depend on
 for p in "${PARTS[@]}"; do
