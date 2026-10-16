@@ -7,9 +7,10 @@
   release.py merge <tag> <config.json> <current dir> <manifests dir> <previous dir> <out dir>
       Each part gets a fingerprint: what goes into it (its merged manifest, its config entry and
       script, the settings and build scripts every part shares). A part whose fingerprint the
-      previous release has keeps that release's archives and version, byte for byte: the app (and
-      Play) only updates the parts that changed. The others get <tag> as their version and this
-      build's archives.
+      previous release has, or whose files came out the same as there for every ABI (e.g. the
+      build scripts changed, but not what it gets), keeps that release's archives and version,
+      byte for byte: the app (and Play) only updates the parts that changed. The others get <tag>
+      as their version and this build's archives.
       <config.json>: config.yaml as JSON (its abis and packages). <current dir>: <arch>/<lib> and
       sizes-<arch>.json of this build (arch: the abi's termux name). <previous dir>: the previous
       release's parts.json and its archives in <abi>/<lib> (both may be missing: then all is new).
@@ -21,6 +22,7 @@ import json
 import os
 import shutil
 import sys
+import tarfile
 
 HERE = os.path.dirname(os.path.abspath(__file__))
 # What every part is built with (not this script: it only picks what ships)
@@ -78,6 +80,26 @@ def fingerprint(part, config, manifest):
     return h.hexdigest()
 
 
+# Differs in every release's base, the rest being the same (see build.sh)
+OWN_VERSION = {"base": {"etc/image-version"}}
+
+
+def content(archive, part):
+    """What an archive unpacks to: its files, links and folders with their modes (not their times)."""
+    h = hashlib.sha256()
+    with tarfile.open(archive, "r:xz") as tar:
+        for m in sorted(tar.getmembers(), key=lambda m: m.name):
+            name = m.name.removeprefix("./")
+            if name in OWN_VERSION.get(part, ()):
+                continue
+            h.update(f"\0{name}\0{m.type!r}\0{m.mode:o}\0{m.linkname}\0".encode())
+            if m.isfile():
+                f = tar.extractfile(m)
+                for chunk in iter(lambda: f.read(1 << 20), b""):
+                    h.update(chunk)
+    return h.hexdigest()
+
+
 def merge(tag, config_path, current, manifests, previous, out):
     with open(config_path, encoding="utf-8") as f:
         full = json.load(f)
@@ -105,19 +127,26 @@ def merge(tag, config_path, current, manifests, previous, out):
         fp = fingerprint(part, config, manifest)
         lib = lib_of(part)
         prev = prev_index.get(part)
-        reuse = (
+        complete = (
             prev is not None
-            and prev.get("hash") == fp
             and set(prev.get("abis", {})) == set(abis.values())
             and all(os.path.exists(os.path.join(previous, abi, lib)) for abi in abis.values())
         )
+        same_input = complete and prev.get("hash") == fp
+        same_files = complete and not same_input and all(
+            content(os.path.join(previous, abi, lib), part) == content(os.path.join(current, arch, lib), part)
+            for arch, abi in abis.items()
+        )
+        reuse = same_input or same_files
         for arch, abi in abis.items():
             os.makedirs(os.path.join(out, abi), exist_ok=True)
             source = os.path.join(previous, abi, lib) if reuse else os.path.join(current, arch, lib)
             shutil.copyfile(source, os.path.join(out, abi, lib))
         if reuse:
             entry = dict(prev)
-            print(f"{part}: unchanged, keeps {prev['version']}")
+            # Known by what goes into it now, for the next release
+            entry["hash"] = fp
+            print(f"{part}: {'same files' if same_files else 'unchanged'}, keeps {prev['version']}")
         else:
             entry = {
                 "version": tag,

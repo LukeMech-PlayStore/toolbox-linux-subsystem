@@ -22,8 +22,8 @@ EXCLUDE='^(aosp-libs|aosp-utils|libandroid-stub|resolv-conf)$'
 # Not needed at runtime (EREs on paths relative to $PREFIX)
 PERL='lib/perl5/[^/]+/([^/]+-android/)?(auto/)?'
 PRUNE_PATTERNS=(
-  # Docs, headers, static libs, bytecode
-  'share/(man|doc|info|locale|lintian)/' 'include/' '.*\.h$' 'lib/.*\.a$' '.*/__pycache__/' '.*\.py[co]$' '.*\.pod$'
+  # Docs, headers, static libs, bytecode, GObject introspection's XML (for building bindings)
+  'share/(man|doc|info|locale|lintian|gir-1\.0)/' 'include/' '.*\.h$' 'lib/.*\.a$' '.*/__pycache__/' '.*\.py[co]$' '.*\.pod$'
   # Python: tests, dev tools, REPL, pure-python fallbacks of C modules
   'lib/python3[^/]*/(test|idlelib|ensurepip|pydoc_data|tkinter|turtledemo|unittest|_pyrepl|__phello__|config-[^/]*)/'
   'lib/python3[^/]*/_pydecimal\.py$' 'lib/python3[^/]*/lib-dynload/(_test|_ctypes_test|xx)[^/]*$'
@@ -61,6 +61,20 @@ mapfile -t BUILD_PKGS < <(cfg '(.build_packages // [])[]')
 read -r -a PIP_OPTIONS <<< "$(cfg '.pip_options // ""')"
 
 apt-get install -y "${PKGS[@]}"
+# A part's packages as installed: a name another package provides (as apt took it, e.g. yt-dlp
+# for python-yt-dlp) is that package
+packages_of() {
+  local name
+  list_of "$1" packages | while IFS= read -r name; do
+    if dpkg-query -W -f='${Status}\n' "$name" 2>/dev/null | grep -q ' installed$'; then
+      echo "$name"
+    else
+      dpkg-query -W -f='${Package}\t${Provides}\n' \
+        | awk -F'\t' -v n="$name" '{ split($2, p, /, */); for (i in p) { sub(/ .*/, "", p[i]); if (p[i] == n) { print $1; exit } } }' \
+        | grep . || { echo "::error::Nothing installed is or provides $name" >&2; exit 1; }
+    fi
+  done
+}
 if [ ${#PIP[@]} -gt 0 ]; then
   apt-get install -y python-pip "${BUILD_PKGS[@]}"
   # Termux builds with 16 KB pages in mind, make sure locally built modules are too
@@ -70,11 +84,18 @@ fi
 
 # What each part needs: its packages with everything they depend on
 for p in "${PARTS[@]}"; do
-  mapfile -t pkgs < <(list_of "$p" packages)
+  mapfile -t pkgs < <(packages_of "$p")
   if [ ${#pkgs[@]} -gt 0 ]; then
     apt-cache depends --recurse --installed --no-recommends --no-suggests --no-conflicts \
         --no-breaks --no-replaces --no-enhances "${pkgs[@]}" \
       | grep -v '^[ <]' | sort -u | grep -Ev "$EXCLUDE" > "$WORK/$p.apt"
+    # Minus what it leaves out (exclude) and what only that needed
+    mapfile -t excluded < <(list_of "$p" exclude)
+    if [ ${#excluded[@]} -gt 0 ]; then
+      python3 "$HERE/parts.py" reachable "$PREFIX/var/lib/dpkg/status" "$WORK/$p.apt" \
+        "$(IFS=,; echo "${excluded[*]}")" "${pkgs[@]}" > "$WORK/$p.apt.kept"
+      mv "$WORK/$p.apt.kept" "$WORK/$p.apt"
+    fi
   else
     : > "$WORK/$p.apt"
   fi
@@ -105,7 +126,7 @@ for p in "${PARTS[@]}"; do
 
   # What the app tells it unpacks: the part's own packages
   {
-    list_of "$p" packages | xargs -r dpkg-query -W -f='${Package} ${Version}\n'
+    packages_of "$p" | xargs -r dpkg-query -W -f='${Package} ${Version}\n'
     mapfile -t reqs < <(list_of "$p" pip)
     if [ ${#reqs[@]} -gt 0 ]; then python3 "$HERE/pip-files.py" top "${reqs[@]}"; fi
   } > "$COMPONENTS"

@@ -5,9 +5,15 @@
       <part>.apt.own / <part>.pip.own (what goes into it) and <part>.ancestors (the parts it
       builds on). A package goes to the one part needing it that doesn't build on another one
       needing it too; needed by parts apart, it goes to the part they all build on.
+
+  parts.py reachable <dpkg status> <closure file> <excluded,...> <package>...
+      Prints the packages of <closure file> (apt-cache's, one per line) the <package>s still need
+      without the excluded ones (a part's exclude, e.g. a driver only ever loaded when it's there):
+      those and what only they needed go.
 """
 import json
 import os
+import re
 import sys
 
 
@@ -77,6 +83,64 @@ def split(config_path, work):
             f.write("".join(f"{a}\n" for a in order))
 
 
+def read_status(path):
+    """Installed packages in dpkg's status file: name -> (dependency groups, what it provides)."""
+    with open(path, encoding="utf-8") as f:
+        text = f.read()
+    packages = {}
+    for stanza in text.split("\n\n"):
+        fields = {}
+        key = None
+        for line in stanza.splitlines():
+            if line[:1].isspace() and key:
+                fields[key] += " " + line.strip()
+            elif ":" in line:
+                key, value = line.split(":", 1)
+                fields[key] = value.strip()
+        if "Package" not in fields or "installed" not in fields.get("Status", ""):
+            continue
+
+        def names(value):
+            # "a (>= 1) | b, c" -> [[a, b], [c]]; versions and arch qualifiers dropped
+            return [[re.sub(r"[ (:].*", "", alt.strip()) for alt in group.split("|")]
+                    for group in value.split(",") if group.strip()]
+
+        groups = names(fields.get("Depends", "")) + names(fields.get("Pre-Depends", ""))
+        provides = [alt[0] for alt in names(fields.get("Provides", ""))]
+        packages[fields["Package"]] = (groups, provides)
+    return packages
+
+
+def reachable(status, closure_file, excluded, *roots):
+    packages = read_status(status)
+    closure = read_lines(closure_file)
+    gone = {e for e in excluded.split(",") if e}
+    providers = {}
+    for name in closure:
+        for virtual in packages.get(name, ([], []))[1]:
+            providers.setdefault(virtual, []).append(name)
+
+    def resolve(alt):
+        if alt in closure:
+            return [alt]
+        return providers.get(alt, [])
+
+    seen = set()
+    todo = [r for r in roots if r in closure]
+    while todo:
+        name = todo.pop()
+        if name in seen or name in gone:
+            continue
+        seen.add(name)
+        for group in packages.get(name, ([], []))[0]:
+            # The first alternative that's installed (as apt picked it), unless it's excluded: then the next
+            options = [p for alt in group for p in resolve(alt)]
+            kept = [p for p in options if p not in gone]
+            if kept:
+                todo.append(kept[0])
+    print("".join(f"{n}\n" for n in sorted(seen)), end="")
+
+
 if __name__ == "__main__":
     command, *args = sys.argv[1:]
-    {"split": split}[command](*args)
+    {"split": split, "reachable": reachable}[command](*args)

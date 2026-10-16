@@ -27,10 +27,12 @@ proot:
 # - extensions (libpackage-<name>.tar.xz.so): the programs a tool runs on, installed (from Play,
 #   along with the tool's pages) and unpacked when it's first used, and deleted with its data
 # Each lists Termux packages and pip packages: they and their dependencies end up in it, minus
-# what the parts it builds on (requires, and always the base) have. What two extensions both need
-# goes to the one they both build on (the base if nothing else).
+# what the parts it builds on (requires, and always the base) have, and minus what it leaves out
+# (exclude: those packages, with what only they need). What two extensions both need goes to the
+# one they both build on (the base if nothing else).
 # Each part has its own version: a release keeps a part's previous archive (and version) as long as
-# what goes into it is the same (see rootfs/release.py), so the app only updates what changed.
+# what goes into it is the same, or its files come out the same (see rootfs/release.py), so the app
+# only updates what changed.
 packages:
   base:
     packages:
@@ -59,21 +61,22 @@ packages:
       pip:
         - CurrencyConverter
 
-    ffmpeg: # yt-dlp's (merging, remuxing, audio conversion, thumbnails)
+    ffmpeg: # Video encoder, and yt-dlp's (merging, remuxing, audio conversion, thumbnails)
+      # Termux's FFmpeg needs Python too (libplacebo's): building on it, Python and its libraries stay
+      # there instead of going to the base (see parts.py)
+      requires: [python]
       packages:
-        # Its audio encoders (see script)
-        - libmp3lame
-        - libopus
-      # Run after the rest is in place (rootfs/<script>): FFmpeg, built from source since Termux's
-      # pulls in ~390 MB of libraries
-      script: ffmpeg.sh
+        # Termux's, with its video encoders (x264, x265, VP9, AV1) and filters
+        - ffmpeg
+      # Not exported, with what only it needs (LLVM): Mesa's software Vulkan driver, only ever loaded
+      # when a filter asks for Vulkan (libplacebo links Android's own libvulkan.so) - most of the size
+      exclude:
+        - mesa-vulkan-icd-swrast
 
     ytdlp: # Media downloader
-      requires: [python, ffmpeg]
+      requires: [ffmpeg]
       packages:
-        - quickjs-ng # qjs: yt-dlp's JavaScript runtime (YouTube's player challenges)
-      pip:
-        - yt-dlp[default] # default: yt-dlp-ejs, mutagen, brotli, ...
+        - yt-dlp
 
   # For every pip install
   pip_options: --no-binary pillow # Built against the libs above only (Termux's python-pillow pulls in a lot more)
