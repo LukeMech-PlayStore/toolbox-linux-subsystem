@@ -55,7 +55,9 @@ rebuild() {
     # As Termux's build picks the build system
     if [ "$TERMUX_PKG_FORCE_CMAKE" = true ] || { [ ! -f configure ] && [ -f CMakeLists.txt ]; }; then
       command -v cmake > /dev/null || apt-get install -y cmake
+      # Unversioned names, as Termux's cross-compiling for Android gets them (what's linked against them)
       cmake -S . -B build -DCMAKE_BUILD_TYPE=Release -DCMAKE_INSTALL_PREFIX="$PREFIX" \
+        -DCMAKE_PLATFORM_NO_VERSIONED_SONAME=ON -DCMAKE_SKIP_INSTALL_RPATH=ON -DBUILD_TESTING=OFF \
         -DANDROID_NDK="$(mini_ndk)" "${args[@]}"
       cmake --build build -j"$(nproc)"
       DESTDIR="$dest" cmake --install build
