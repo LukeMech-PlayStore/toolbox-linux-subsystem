@@ -61,18 +61,19 @@ part_of() { if [ "$1" = base ]; then echo '.base'; else echo ".extensions[\"$1\"
 list_of() { cfg "($(part_of "$1") // {}) | (.$2 // [])[]"; }
 
 mapfile -t PARTS < <(echo base; cfg '(.extensions // {}) | keys_unsorted[]')
-mapfile -t PKGS < <(for p in "${PARTS[@]}"; do list_of "$p" packages; done | sort -u)
+# The parts' packages and the libraries their pip packages are compiled against
+mapfile -t PKGS < <(for p in "${PARTS[@]}"; do list_of "$p" packages; list_of "$p" pip_libs; done | sort -u)
 mapfile -t PIP < <(for p in "${PARTS[@]}"; do list_of "$p" pip; done)
 # Installed for pip, never exported (left out of every part, with what only they need)
 mapfile -t BUILD_PKGS < <(cfg '(.build_packages // [])[]')
-read -r -a PIP_OPTIONS <<< "$(cfg '.pip_options // ""')"
+read -r -a PIP_OPTIONS <<< "$(for p in "${PARTS[@]}"; do cfg "$(part_of "$p").pip_options // empty"; done | xargs)"
 
 apt-get install -y "${PKGS[@]}"
-# A part's packages as installed: a name another package provides (as apt took it, e.g. yt-dlp
-# for python-yt-dlp) is that package
+# A part's packages (or <key>'s, e.g. pip_libs) as installed: a name another package provides (as
+# apt took it, e.g. yt-dlp for python-yt-dlp) is that package
 packages_of() {
   local name
-  list_of "$1" packages | while IFS= read -r name; do
+  list_of "$1" "${2:-packages}" | while IFS= read -r name; do
     if dpkg-query -W -f='${Status}\n' "$name" 2>/dev/null | grep -q ' installed$'; then
       echo "$name"
     else
@@ -89,24 +90,25 @@ if [ ${#PIP[@]} -gt 0 ]; then
     "${PIP_OPTIONS[@]}" "${PIP[@]}"
 fi
 
-# What each part needs: its packages with everything they depend on
+# What each part may need: its packages and pip_libs with everything they depend on
 for p in "${PARTS[@]}"; do
   mapfile -t pkgs < <(packages_of "$p")
-  if [ ${#pkgs[@]} -gt 0 ]; then
+  mapfile -t deps < <({ printf '%s\n' "${pkgs[@]}"; packages_of "$p" pip_libs; } | grep . | sort -u)
+  if [ ${#deps[@]} -gt 0 ]; then
     apt-cache depends --recurse --installed --no-recommends --no-suggests --no-conflicts \
-        --no-breaks --no-replaces --no-enhances "${pkgs[@]}" \
+        --no-breaks --no-replaces --no-enhances "${deps[@]}" \
       | grep -v '^[ <]' | sort -u | grep -Ev "$EXCLUDE" > "$WORK/$p.apt"
     # Minus what it leaves out (exclude, and the build packages) and what only that needed
     mapfile -t excluded < <(list_of "$p" exclude; printf '%s\n' "${BUILD_PKGS[@]}")
     if [ ${#excluded[@]} -gt 0 ]; then
       python3 "$HERE/parts.py" reachable "$PREFIX/var/lib/dpkg/status" "$WORK/$p.apt" \
-        "$(IFS=,; echo "${excluded[*]}")" "${pkgs[@]}" > "$WORK/$p.apt.kept"
+        "$(IFS=,; echo "${excluded[*]}")" "${deps[@]}" > "$WORK/$p.apt.kept"
       mv "$WORK/$p.apt.kept" "$WORK/$p.apt"
     fi
   else
     : > "$WORK/$p.apt"
   fi
-  # Its own packages, and what pip added for it (see parts.py linked)
+  # Its own packages and what pip added for it; of the rest, only what those use (parts.py linked)
   printf '%s\n' "${pkgs[@]}" | grep . > "$WORK/$p.roots" || true
   mapfile -t reqs < <(list_of "$p" pip)
   if [ ${#reqs[@]} -gt 0 ]; then python3 "$HERE/pip-files.py" closure "${reqs[@]}" > "$WORK/$p.pip"; else : > "$WORK/$p.pip"; fi
@@ -143,12 +145,17 @@ for p in "${PARTS[@]}"; do
     | sort -u > "$WORK/$p.files"
   tar -C "$PREFIX" --no-recursion -cf - -T "$WORK/$p.files" | tar -C "$STAGE/usr" -xf -
 
-  # What the app tells it unpacks: the part's own packages
+  # What the app lists it holds ("name version"): all of it, its own packages first
   {
     packages_of "$p" | xargs -r dpkg-query -W -f='${Package} ${Version}\n'
     mapfile -t reqs < <(list_of "$p" pip)
     if [ ${#reqs[@]} -gt 0 ]; then python3 "$HERE/pip-files.py" top "${reqs[@]}"; fi
   } > "$COMPONENTS"
+  {
+    xargs -r dpkg-query -W -f='${Package} ${Version}\n' < "$WORK/$p.apt.own"
+    sed 's/==/ /' "$WORK/$p.pip.own"
+  } | sort -f | { grep -vixF -f "$COMPONENTS" || true; } > "$WORK/$p.rest"
+  cat "$WORK/$p.rest" >> "$COMPONENTS"
 
   # Libraries Termux still links for 4 KB pages, rebuilt (see the script)
   STAGE="$STAGE" bash "$HERE/rebuild-16k.sh"

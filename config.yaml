@@ -22,17 +22,23 @@ proot:
   talloc: "2.5.0" # Statically linked
   android_api: 29 # Android 10
 
-# The rootfs comes in parts, shipped in the app's jniLibs (lib*.so, so Android unpacks them with it):
-# - base (librootfs.tar.xz.so): what the extensions build on, unpacked when the app first starts
-# - extensions (libpackage-<name>.tar.xz.so): the programs a tool runs on, installed (from Play,
-#   along with the tool's pages) and unpacked when it's first used, and deleted with its data
-# Each lists Termux packages and pip packages: they and their dependencies end up in it, minus
-# what the parts it builds on (requires, and always the base) have, and minus what it leaves out
-# (exclude: those packages, with what only they need). Of the dependencies, only what its packages
-# use: the libraries they link, the interpreters their scripts run and the data those come with
-# (Termux's packages depend on a lot only their tools or their building need, see rootfs/parts.py
-# linked). What two extensions both need goes to the one they both build on (the base if nothing
-# else).
+# The rootfs, as a tree of parts shipped in the app's jniLibs (lib*.so, so Android unpacks them with it):
+# - base (librootfs.tar.xz.so): unpacked when the app first starts; everything builds on it
+# - extensions (libpackage-<name>.tar.xz.so): what a tool runs on, installed (from Play, along with
+#   the tool's pages) and unpacked when it's first used, and deleted with its data
+#
+# A part says only what it is for; where its dependencies go follows from the tree:
+# - packages / pip: the Termux and pip packages it's for (its own programs, data and modules)
+# - requires: the extensions it builds on (always the base too), listed before it; the app
+#   installs those first
+# - pip_libs: Termux libraries its pip packages are compiled against (installed before pip)
+# - pip_options: options for pip installing them
+# - exclude: dependencies to leave out (with what only they need)
+# Everything a part's packages use comes along, and only that: the libraries they link, the
+# interpreters their scripts run, the data those come with (rootfs/parts.py linked). Termux's
+# packages depend on a lot only their tools or their building need; that stays out. What several
+# parts use goes to the one they all build on: Python and FFmpeg both link zlib and OpenSSL, so
+# those are in the base. In the app, a part lists everything it holds, each with its version.
 # Each part has its own version: a release keeps a part's previous archive (and version) as long as
 # what goes into it is the same, or its files come out the same (see rootfs/release.py), so the app
 # only updates what changed.
@@ -42,35 +48,14 @@ packages:
       - dash # $PREFIX/bin/sh for anything shelling out (Android's sh can't run under proot on Samsung)
 
   extensions:
-    # The libraries Python and FFmpeg both link (OpenSSL, libffi, zlib, ...) go to the base
-    python: # Python, for the packages running on it
+    python: # Python, for the tools running on it
       packages:
         - python
 
-    exiftool: # Metadata editor
-      packages:
-        - exiftool
-
-    qrcode: # QR generator
-      requires: [python]
-      packages:
-        # qrcode[pil]'s Pillow is built against these only (see pip_options)
-        - libjpeg-turbo
-        - zlib
-      pip:
-        - qrcode[pil]
-
-    currencyconverter: # Currency converter
-      requires: [python]
-      pip:
-        - CurrencyConverter
-
     ffmpeg: # Video encoder, and yt-dlp's (merging, remuxing, audio conversion, thumbnails)
-      # Not Python: GLib's and libplacebo's packages depend on it, but nothing FFmpeg links does
+      # Not on Python: GLib's and libplacebo's packages depend on it, but nothing FFmpeg links does
       packages:
-        # Termux's, with its video encoders (x264, x265, VP9, AV1) and filters
-        - ffmpeg
-      # Not exported, with what only they need
+        - ffmpeg # Termux's, with its video encoders (x264, x265, VP9, AV1) and filters
       exclude:
         # Termux's Vulkan loader: libplacebo gets Android's (libvulkan.so), with the GPU's driver.
         # Mesa's software one (~178 MB with LLVM) goes with it, being only ever loaded by it
@@ -78,16 +63,32 @@ packages:
         # Fontconfig's DejaVu fonts: it finds Android's in /system/fonts (bound in proot)
         - ttf-dejavu # ~10 MB
 
+    exiftool: # Metadata editor
+      packages:
+        - exiftool
+
+    qrcode: # QR generator
+      requires: [python]
+      pip:
+        - qrcode[pil]
+      # Pillow is built against these only (Termux's python-pillow pulls in a lot more)
+      pip_libs:
+        - libjpeg-turbo
+        - zlib
+      pip_options: --no-binary pillow
+
+    currencyconverter: # Currency converter
+      requires: [python]
+      pip:
+        - CurrencyConverter
+
     ytdlp: # Media downloader
       requires: [python, ffmpeg]
       packages:
         - yt-dlp
 
-  # For every pip install
-  pip_options: --no-binary pillow # Built against the libs above only (Termux's python-pillow pulls in a lot more)
-
-  # Build-only dependencies: installed when pip has packages, never exported (left out of every part,
-  # with what only they need, even when a package depends on them, as python-yt-dlp on python-pip)
+  # Only for building: installed when pip has packages, never in a part (left out with what only
+  # they need, even as a dependency, as python-yt-dlp's of python-pip)
   build_packages:
     - python-pip
     - build-essential # Clang, Make, pkg-config
