@@ -7,7 +7,7 @@ Both are built for every ABI Google Play supports: `armeabi-v7a`, `arm64-v8a`, `
 
 ## Rootfs
 
-`.github/workflows/build-rootfs.yml` runs once a month (1st) and on demand. A release is only published when a part changed, with the parts' versions and a changelog of the differences per part.
+`.github/workflows/build.yml` runs once a month (1st) and on demand: it builds PRoot (`build-proot.yml`, a job of it) and the rootfs for every ABI and releases them together, PRoot and its loaders in each ABI's folder of `rootfs.tar.gz` next to the parts, so the app gets everything from one release. A release is only published when a part or PRoot changed, with the parts' versions, PRoot's and a changelog of the differences per part.
 
 Each part has its own version (`rootfs/release.py`): a part keeps the previous release's archive, byte for byte, and its version as long as what goes into it is the same - its packages (its merged manifest), its `config.yaml` entry and script, and the settings and build scripts every part shares. It also keeps them when its files come out the same as there (their contents, links and modes, not their times; the base's own `etc/image-version` aside), e.g. after a build script changed in a way that didn't touch it. So the app (and Play, for an extension's module) only updates the parts that changed. The release's `parts.json` (also in `rootfs.tar.gz`, for the app) has each part's version and, per ABI, its size unpacked, its archive's size and what it holds.
 
@@ -19,7 +19,7 @@ Termux binaries use Android's own libc (bionic) and are linked for 16 KB pages, 
 
 ## PRoot
 
-`proot/build.sh` cross-compiles [termux/proot](https://github.com/termux/proot) with a statically linked talloc. The loaders (`libproot-loader.so`, `libproot-loader32.so` on 64-bit ABIs) are built from the same source, so they always match the proot binary. The workflow runs on every push to `proot/`, and to `config.yaml` when its `proot` section or `abis` changed.
+`proot/build.sh` cross-compiles [termux/proot](https://github.com/termux/proot) with a statically linked talloc. The loaders (`libproot-loader.so`, `libproot-loader32.so` on 64-bit ABIs) are built from the same source, so they always match the proot binary. It's built with every release (`build-proot.yml`, called by `build.yml`; run by hand, it only builds), and ships with the base (the app's rootfs module).
 
 Patches in `proot/patches/`:
 - `proot-loader-path.patch` - loader names are configurable and a relative loader path is resolved next to the proot binary (the app's `nativeLibraryDir`)
@@ -27,8 +27,8 @@ Patches in `proot/patches/`:
 - `proot-ashmem-include-string.patch` - missing `<string.h>` include (same as Termux)
 - `proot-loader-16k-pages.patch` - loaders are linked for 16 KB pages too (they don't get `LDFLAGS`; the NDK only defaults to it for 64-bit ABIs)
 
-To update, bump `ref` / `talloc` in `config.yaml`'s `proot` section (and `NDK_VERSION` in the workflow); a patch that no longer applies fails the build.
+`ref` and `talloc` in `config.yaml`'s `proot` section are `latest`: each build takes PRoot's newest tag and talloc's newest release (a fixed ref or version pins it; `NDK_VERSION` is in `build-proot.yml`). A patch that no longer applies fails the build.
 
 ## Releases
 
-Releases are in the releases tab, with tags `YY.MM.DD`, and for proot binaries `proot-*`. A rootfs part's version is the tag of the release it last changed in.
+Releases are in the releases tab, with tags `YY.MM.DD`, each with the rootfs and PRoot. A rootfs part's version is the tag of the release it last changed in.

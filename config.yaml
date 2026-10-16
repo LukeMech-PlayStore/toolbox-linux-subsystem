@@ -1,5 +1,5 @@
-# What both workflows build: PRoot (proot:, build-proot.yml) and the rootfs (packages:, build-rootfs.yml),
-# each for every ABI here
+# What build.yml builds once a month, for every ABI here, and releases together: PRoot (proot:,
+# build-proot.yml) and the rootfs (packages:, rootfs/build.sh)
 
 # Every ABI Google Play supports (the app's jniLibs folders), with what each build calls it:
 # - proot: the NDK's name for it (proot/ndk-setup.sh)
@@ -12,14 +12,14 @@ abis:
   x86:         { proot: x86,    termux: i686,    runner: ubuntu-latest }
   x86_64:      { proot: x86_64, termux: x86_64,  runner: ubuntu-latest }
 
-# PRoot and its loaders, cross-compiled with the NDK (proot/build.sh); the workflow runs when this
-# section, abis (or proot/) changes
+# PRoot and its loaders, cross-compiled with the NDK (proot/build.sh), shipped with the base (the app's
+# rootfs module)
 proot:
-  # A tag, a branch name (master) or a commit hash; the loaders are built from the same source, so
-  # they always match
+  # A tag, a branch name (master), a commit hash, or latest (its newest tag, as each build finds it);
+  # the loaders are built from the same source, so they always match
   repo: termux/proot
-  ref: v5.1.107.96
-  talloc: "2.5.0" # Statically linked
+  ref: latest
+  talloc: latest # Statically linked; latest: its newest release on samba.org
   android_api: 29 # Android 10
 
 # The rootfs, as a tree of parts shipped in the app's jniLibs (lib*.so, so Android unpacks them with

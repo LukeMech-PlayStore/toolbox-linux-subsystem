@@ -1,4 +1,7 @@
-name: Build Termux Rootfs
+name: Build
+
+# Monthly (and on demand): PRoot (build-proot.yml) and the rootfs (build.sh in termux-docker) for every
+# ABI, released together: the app gets both from one release (rootfs.tar.gz)
 
 on:
   schedule:
@@ -125,10 +128,16 @@ jobs:
           path: out/
 
   # ------------------------------------------------------------------
+  # JOB 2b: PRoot and its loaders (alongside the rootfs)
+  # ------------------------------------------------------------------
+  proot:
+    uses: ./.github/workflows/build-proot.yml
+
+  # ------------------------------------------------------------------
   # JOB 3: Release & Compare
   # ------------------------------------------------------------------
   release:
-    needs: [prepare, build]
+    needs: [prepare, build, proot]
     runs-on: ubuntu-latest
     steps:
 
@@ -149,9 +158,9 @@ jobs:
         run: |
           mkdir -p prev_assets prev_package
 
-          # Latest rootfs release (not proot-*)
-          LATEST_TAG=$(gh release list --limit 20 --exclude-drafts --exclude-pre-releases --json tagName \
-            --jq '.[] | select(.tagName | startswith("proot-") | not) | .tagName' | head -n 1 || echo "")
+          # The latest release (the rootfs and PRoot)
+          LATEST_TAG=$(gh release list --limit 1 --exclude-drafts --exclude-pre-releases --json tagName \
+            --jq '.[0].tagName // empty' || echo "")
 
           echo "Latest detected tag: [$LATEST_TAG]"
 
@@ -201,6 +210,28 @@ jobs:
             current_assets manifests prev_package final_package
           mv final_package/changed.txt changed.txt
           cp final_package/parts.json parts.json
+
+      - name: Download PRoot
+        uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
+        with:
+          name: proot
+          path: proot_out
+
+      - name: Add PRoot
+        id: proot
+        run: |
+          # Each ABI's jniLibs folder gets PRoot and its loaders, as built now: the app takes them from
+          # here, with the base (its rootfs module). Changed from the previous release's: a release is needed
+          changed=false
+          for dir in proot_out/*/; do
+            abi=$(basename "$dir")
+            for lib in "$dir"lib*.so; do
+              prev="prev_package/$abi/$(basename "$lib")"
+              if [ ! -f "$prev" ] || ! cmp -s "$lib" "$prev"; then changed=true; fi
+              cp "$lib" "final_package/$abi/"
+            done
+          done
+          echo "changed=$changed" >> $GITHUB_OUTPUT
 
       - name: Generate Changelog
         id: changelog
@@ -279,6 +310,10 @@ jobs:
           fi
           FINAL_LOG="## 🧩 Parts"$'\n\n'"$VERSIONS"$'\n'"$FINAL_LOG"
 
+          # Or PRoot did
+          if [ "${{ steps.proot.outputs.changed }}" == "true" ]; then
+            CHANGES_DETECTED="true"
+          fi
           if [ "${{ inputs.force_release }}" == "true" ]; then
             CHANGES_DETECTED="true"
           fi
@@ -289,7 +324,7 @@ jobs:
       - name: Package Artifacts
         if: steps.changelog.outputs.needed == 'true'
         run: |
-          # Every ABI's jniLibs folder (the parts as Pick Parts chose them) and parts.json, for the app
+          # Every ABI's jniLibs folder (the parts as Pick Parts chose them, and PRoot) and parts.json, for the app
           echo "==> Creating Master Archive..."
           tar -czf rootfs.tar.gz -C final_package .
           tar -tzvf rootfs.tar.gz
@@ -303,6 +338,7 @@ jobs:
           body: |
               ## Automated Build ${{ needs.prepare.outputs.version }}
               Base: [Termux packages](https://github.com/termux/termux-packages)
+              PRoot: [`termux/proot@${{ needs.proot.outputs.proot_ref }}`](https://github.com/termux/proot/tree/${{ needs.proot.outputs.proot_ref }}), talloc `${{ needs.proot.outputs.talloc_version }}` (statically linked), with its loaders; NDK ${{ needs.proot.outputs.ndk_version }}${{ steps.proot.outputs.changed == 'true' && ' 🆕' || '' }}
               ABIs: ${{ join(fromJSON(needs.prepare.outputs.matrix).*.abi, ', ') }}
               
               ${{ steps.changelog.outputs.full_log }}

@@ -16,6 +16,21 @@ TALLOC_VERSION=$(proot_cfg talloc)
 PROOT_REPO=$(proot_cfg repo)
 PROOT_REF=$(proot_cfg ref)
 ANDROID_API_LEVEL=$(proot_cfg android_api)
+# "latest": PRoot's newest tag, talloc's newest release (each build takes what's new, as the rootfs does)
+if [ "$PROOT_REF" = latest ]; then
+    PROOT_REF=$(git ls-remote --tags --refs --sort=-v:refname "https://github.com/${PROOT_REPO}" | head -n1 | sed 's|.*refs/tags/||')
+    [ -n "$PROOT_REF" ] || { echo "Error: no tags in ${PROOT_REPO}" >&2; exit 1; }
+fi
+if [ "$TALLOC_VERSION" = latest ]; then
+    TALLOC_VERSION=$(curl -fsSL https://www.samba.org/ftp/talloc/ | grep -oE 'talloc-[0-9]+\.[0-9]+\.[0-9]+\.tar\.gz' \
+        | sed 's/^talloc-//; s/\.tar\.gz$//' | sort -uV | tail -n1)
+    [ -n "$TALLOC_VERSION" ] || { echo "Error: no talloc release found" >&2; exit 1; }
+fi
+echo "PRoot ${PROOT_REPO}@${PROOT_REF}, talloc ${TALLOC_VERSION}"
+# What was built, for the release notes (build-proot.yml)
+if [ -n "${GITHUB_OUTPUT:-}" ]; then
+    { echo "proot_ref=$PROOT_REF"; echo "talloc_version=$TALLOC_VERSION"; } >> "$GITHUB_OUTPUT"
+fi
 # Every ABI (config.yaml's abis) as "<jniLibs folder>:<NDK arch>"
 TARGETS=$(yq -r '.abis | to_entries[] | .key + ":" + .value.proot' "$CONFIG")
 [ -n "$TARGETS" ] || { echo "Error: no abis in $CONFIG" >&2; exit 1; }

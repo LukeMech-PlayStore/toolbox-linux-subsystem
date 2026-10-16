@@ -1,92 +1,37 @@
 name: Build PRoot
 
+# PRoot and its loaders for every ABI (config.yaml's proot section and abis), cross-compiled with the
+# NDK (proot/build.sh): a job of build.yml, whose release ships them with the rootfs. Run by hand, it
+# just builds them (an artifact to look at, no release)
 on:
-  push:
-    branches: [main]
-    paths:
-      - 'proot/**'
-      - 'config.yaml' # Its proot section (see prepare)
-      - '.github/workflows/build-proot.yml'
+  workflow_call:
+    outputs:
+      proot_ref:
+        description: The PRoot ref built (config.yaml's, "latest" resolved)
+        value: ${{ jobs.build.outputs.proot_ref }}
+      talloc_version:
+        description: The talloc version built
+        value: ${{ jobs.build.outputs.talloc_version }}
+      ndk_version:
+        description: The NDK it was built with
+        value: ${{ jobs.build.outputs.ndk_version }}
   workflow_dispatch:
 
 permissions:
-  contents: write # Required to read tags and create Releases
+  contents: read
 
 env:
   NDK_VERSION: r30
 
 jobs:
-  # ------------------------------------------------------------------
-  # JOB 1: Calculate Version ID
-  # ------------------------------------------------------------------
-  prepare:
-    runs-on: ubuntu-latest
-    outputs:
-      version: ${{ steps.calc_ver.outputs.version }}
-      build: ${{ steps.changed.outputs.build }}
-    steps:
-      - name: Checkout
-        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
-        with:
-          fetch-depth: 0 # Fetch all history for tags
-
-      - name: Check What Changed
-        id: changed
-        env:
-          BEFORE: ${{ github.event.before }}
-        run: |
-          # A push touching config.yaml only builds when its proot section or abis changed (not
-          # just the packages); run by hand, or when proot/ or this workflow changed, it always does
-          build=true
-          if [ "${{ github.event_name }}" = push ] && git cat-file -e "$BEFORE^{commit}" 2>/dev/null; then
-            others=$(git diff --name-only "$BEFORE" HEAD -- proot .github/workflows/build-proot.yml)
-            # Its section and the ABIs it's built for
-            old=$(git show "$BEFORE:config.yaml" 2>/dev/null | yq -o=json -I=0 '[.proot, .abis]' || echo none)
-            new=$(yq -o=json -I=0 '[.proot, .abis]' config.yaml)
-            if [ -z "$others" ] && [ "$old" = "$new" ]; then
-              build=false
-              echo "::notice::Only config.yaml's packages changed: no PRoot build"
-            fi
-          fi
-          echo "build=$build" >> $GITHUB_OUTPUT
-
-      - name: Calculate Next Version
-        id: calc_ver
-        run: |
-          # Format: proot-YY.MM.DD
-          DATE_STR=$(date +'%y.%m.%d')
-          BASE_TAG="proot-${DATE_STR}"
-          NEW_TAG="$BASE_TAG"
-          
-          # Get existing tags to handle collisions (same day builds)
-          echo "Checking tags for prefix $BASE_TAG..."
-          EXISTING_TAGS=$(git tag -l "${BASE_TAG}*")
-          
-          if [[ "$EXISTING_TAGS" == *"$BASE_TAG"* ]]; then
-             # If version exists, loop through suffixes a-z
-             for suffix in a b c d e f g; do
-               if [[ "$EXISTING_TAGS" != *"${BASE_TAG}${suffix}"* ]]; then
-                 NEW_TAG="${BASE_TAG}${suffix}"
-                 break
-               fi
-             done
-          fi
-          
-          echo "Computed Version: $NEW_TAG"
-          echo "version=$NEW_TAG" >> $GITHUB_OUTPUT
-
-  # ------------------------------------------------------------------
-  # JOB 2: Build
-  # ------------------------------------------------------------------
   build:
-    name: Build All Archs
-    needs: prepare
-    if: needs.prepare.outputs.build == 'true'
+    name: Build PRoot
     runs-on: ubuntu-latest
     outputs:
-      proot_ref: ${{ steps.versions.outputs.proot_ref }}
-      talloc_version: ${{ steps.versions.outputs.talloc_version }}
-    
+      proot_ref: ${{ steps.proot.outputs.proot_ref }}
+      talloc_version: ${{ steps.proot.outputs.talloc_version }}
+      ndk_version: ${{ env.NDK_VERSION }}
+
     steps:
       - name: Checkout
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
@@ -97,71 +42,18 @@ jobs:
         with:
           ndk-version: ${{ env.NDK_VERSION }}
 
-      - name: Read Versions
-        id: versions
-        run: |
-          echo "proot_ref=$(yq -r '.proot.ref' config.yaml)" >> $GITHUB_OUTPUT
-          echo "talloc_version=$(yq -r '.proot.talloc' config.yaml)" >> $GITHUB_OUTPUT
-
       - name: Build PRoot
+        id: proot
         env:
           ANDROID_NDK_HOME: ${{ steps.setup-ndk.outputs.ndk-path }}
         run: |
           cd proot
-          
-          # Make our new consolidated scripts executable
           chmod +x build.sh ndk-setup.sh
-          
-          # Run the main build orchestrator
+          # Per ABI (jniLibs folder): libproot.so and its loaders, in out/
           ./build.sh
-
-      - name: Archive Binaries
-        working-directory: proot
-        run: |
-          # Compress the 'out' directory contents (arm, arm64, etc.) into a tarball
-          # -C out . means "change to out directory and archive everything in ."
-          tar -czf proot-android.tar.gz -C out .
 
       - name: Upload Artifacts
         uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
         with:
-          name: proot-android-build
-          path: proot/proot-android.tar.gz
-
-  # ------------------------------------------------------------------
-  # JOB 3: Release
-  # ------------------------------------------------------------------
-  release:
-    needs: [prepare, build]
-    runs-on: ubuntu-latest
-    steps:
-      - name: Download Artifacts
-        uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
-        with:
-          name: proot-android-build
-          path: release_assets
-
-      - name: Push Release
-        uses: softprops/action-gh-release@efb35369e0ad2afab669f228072c1b0d510eae64 # v3.0.3
-        with:
-          tag_name: ${{ needs.prepare.outputs.version }}
-          name: PRoot Android ${{ needs.prepare.outputs.version }}
-          body: |
-             ## Automated Build ${{ needs.prepare.outputs.version }}
-             
-             ### Contents
-             This release contains `proot` binaries (talloc linked statically) and the matching loaders for Android,
-             all built from the same source.
-
-             - proot: [`termux/proot@${{ needs.build.outputs.proot_ref }}`](https://github.com/termux/proot/tree/${{ needs.build.outputs.proot_ref }})
-             - talloc: `${{ needs.build.outputs.talloc_version }}`
-             
-             **Structure in tarball:**
-             - `armeabi-v7a/`
-             - `arm64-v8a/`
-             - `x86/`
-             - `x86_64/`
-             
-             *Built using NDK ${{ env.NDK_VERSION }}.*
-          files: release_assets/proot-android.tar.gz
-          make_latest: true
+          name: proot
+          path: proot/out/

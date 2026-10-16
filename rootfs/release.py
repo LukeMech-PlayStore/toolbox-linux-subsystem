@@ -1,4 +1,4 @@
-"""Run by build-rootfs.yml: what a release ships of each part of the rootfs (see config.yaml).
+"""Run by build.yml: what a release ships of each part of the rootfs (see config.yaml).
 
   release.py sizes <stage dir> <archives dir> <manifests dir>
       After an ABI's parts are compressed: prints, per part, its size unpacked and as an archive
