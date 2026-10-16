@@ -190,7 +190,9 @@ done
 # interpreter directly, like termux-fix-shebang does, and sh is dash (see config.yaml). The
 # interpreter has to be in the script's part or one it builds on.
 for p in "${PARTS[@]}"; do
-  find "$ROOT/$p/usr/bin" -type f 2>/dev/null | while IFS= read -r f; do
+  # A part of libraries only has none (find failing would end the build)
+  [ -d "$ROOT/$p/usr/bin" ] || continue
+  find "$ROOT/$p/usr/bin" -type f | while IFS= read -r f; do
     head -n1 "$f" | grep -q "^#!$PREFIX/bin/env " || continue
     sed -i "1s|^#!$PREFIX/bin/env *|#!$PREFIX/bin/|" "$f"
     interpreter=$(head -n1 "$f" | sed 's|^#!||; s| .*||')

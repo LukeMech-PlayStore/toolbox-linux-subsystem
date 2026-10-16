@@ -23,7 +23,9 @@ proot:
   android_api: 29 # Android 10
 
 # The rootfs, as a tree of parts shipped in the app's jniLibs (lib*.so, so Android unpacks them with it):
-# - base (librootfs.tar.xz.so): unpacked when the app first starts; everything builds on it
+# - base (librootfs.tar.xz.so): what everything builds on (dash, and what several parts link, e.g.
+#   Python's and FFmpeg's OpenSSL and zlib), installed (from Play, with PRoot) along with the first
+#   tool on Linux, and unpacked before it
 # - extensions (libpackage-<name>.tar.xz.so): what a tool runs on, installed (from Play, along with
 #   the tool's pages) and unpacked when it's first used, and deleted with its data
 #
@@ -50,18 +52,12 @@ packages:
       - dash # $PREFIX/bin/sh for anything shelling out (Android's sh can't run under proot on Samsung)
 
   extensions:
-    # What Python and FFmpeg both link (OpenSSL, libffi, zlib, ...): no packages of its own, so
-    # neither needs the other, and the base everyone gets stays small
-    libs_py_ffmpeg: {}
-
     python: # Python, for the tools running on it
-      requires: [libs_py_ffmpeg]
       packages:
         - python
 
     ffmpeg: # Video encoder, and yt-dlp's (merging, remuxing, audio conversion, thumbnails)
       # Not on Python: GLib's and libplacebo's packages depend on it, but nothing FFmpeg links does
-      requires: [libs_py_ffmpeg]
       packages:
         - ffmpeg
       # Built with Termux's recipe (its source, patches and options: x264, x265, VP9, SVT-AV1, dav1d,
