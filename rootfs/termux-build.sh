@@ -34,6 +34,13 @@ export TERMUX_ARCH=$(dpkg --print-architecture)
 # Its own temporary files (configure scripts build and run tests there; $PREFIX/tmp may not be there)
 export TMPDIR="$WORK/tmp-$package"
 mkdir -p "$TMPDIR"
+# Scripts starting with #!/bin/sh and the like (configure makes and runs its own) run as in Termux:
+# termux-exec maps those to $PREFIX (Termux has no /bin)
+dpkg -s termux-exec > /dev/null 2>&1 || apt-get install -y termux-exec
+for lib in libtermux-exec-ld-preload.so libtermux-exec.so; do
+  if [ -f "$PREFIX/lib/$lib" ]; then export LD_PRELOAD="$PREFIX/lib/$lib"; break; fi
+done
+[ -n "${LD_PRELOAD:-}" ] || { echo "::error::No termux-exec library to preload"; exit 1; }
 case $TERMUX_ARCH in
   aarch64) TERMUX_HOST_PLATFORM=aarch64-linux-android TERMUX_ARCH_BITS=64 ;;
   arm) TERMUX_HOST_PLATFORM=arm-linux-androideabi TERMUX_ARCH_BITS=32 ;;
