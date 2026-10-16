@@ -42,12 +42,8 @@ packages:
       - dash # $PREFIX/bin/sh for anything shelling out (Android's sh can't run under proot on Samsung)
 
   extensions:
-    # Libraries Python and FFmpeg both link (OpenSSL, libffi, zlib, ...): no packages of its own, but
-    # what the parts building on it share goes here instead of into the base everyone gets
-    libs: {}
-
+    # The libraries Python and FFmpeg both link (OpenSSL, libffi, zlib, ...) go to the base
     python: # Python, for the packages running on it
-      requires: [libs]
       packages:
         - python
 
@@ -71,14 +67,14 @@ packages:
 
     ffmpeg: # Video encoder, and yt-dlp's (merging, remuxing, audio conversion, thumbnails)
       # Not Python: GLib's and libplacebo's packages depend on it, but nothing FFmpeg links does
-      requires: [libs]
       packages:
         # Termux's, with its video encoders (x264, x265, VP9, AV1) and filters
         - ffmpeg
       # Not exported, with what only they need
       exclude:
-        # Mesa's software Vulkan driver, only ever loaded when a filter asks for Vulkan
-        - mesa-vulkan-icd-swrast # ~178 MB installed (13 MB + libllvm 166 MB)
+        # Termux's Vulkan loader: libplacebo gets Android's (libvulkan.so), with the GPU's driver.
+        # Mesa's software one (~178 MB with LLVM) goes with it, being only ever loaded by it
+        - vulkan-loader-generic
         # Fontconfig's DejaVu fonts: it finds Android's in /system/fonts (bound in proot)
         - ttf-dejavu # ~10 MB
 
