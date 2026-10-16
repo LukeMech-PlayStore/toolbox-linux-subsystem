@@ -6,6 +6,12 @@ name: Build
 on:
   schedule:
     - cron: '0 2 1 * *' # Once a month (1st) at 02:00 UTC
+  # And with every change of what's built (not of the docs alone)
+  push:
+    branches: [main]
+    paths-ignore:
+      - '**.md'
+      - 'LICENSE'
   workflow_dispatch:
     inputs:
       force_release:
@@ -15,6 +21,11 @@ on:
 
 permissions:
   contents: write
+
+# One at a time (queued, never cancelled): each release's tag and parts build on the one before
+concurrency:
+  group: build
+  cancel-in-progress: false
 
 jobs:
   # ------------------------------------------------------------------
