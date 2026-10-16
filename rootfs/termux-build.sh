@@ -31,6 +31,9 @@ recipe="$REPO/packages/$package"
 # As Termux's toolchain has them for its packages (natively: the host is the target)
 export TERMUX_PREFIX=$PREFIX TERMUX_PKG_BUILDER_DIR=$recipe TERMUX_PKG_SRCDIR=$src TERMUX_PKG_BUILDDIR=$build
 export TERMUX_ARCH=$(dpkg --print-architecture)
+# Its own temporary files (configure scripts build and run tests there; $PREFIX/tmp may not be there)
+export TMPDIR="$WORK/tmp-$package"
+mkdir -p "$TMPDIR"
 case $TERMUX_ARCH in
   aarch64) TERMUX_HOST_PLATFORM=aarch64-linux-android TERMUX_ARCH_BITS=64 ;;
   arm) TERMUX_HOST_PLATFORM=arm-linux-androideabi TERMUX_ARCH_BITS=32 ;;
