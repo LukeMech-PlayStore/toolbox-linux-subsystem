@@ -103,7 +103,8 @@ if declare -F termux_step_configure > /dev/null; then
     echo "DROP=($(printf '%q ' "${DROP[@]}"))"
     declare -f keep
     echo "mapfile -t args < <(keep \"\$@\")"
-    echo "exec $(printf '%q' "$src/configure") \"\${args[@]}\""
+    # Through sh: configure scripts start with #!/bin/sh, which Termux hasn't (its build host has)
+    echo "exec sh $(printf '%q' "$src/configure") \"\${args[@]}\""
   } > "$shim/configure"
   chmod 755 "$shim/configure"
   TERMUX_PKG_SRCDIR=$shim termux_step_configure
@@ -122,7 +123,7 @@ else
     cmake --build "$build" -j"$(nproc)"
     DESTDIR="$dest" cmake --install "$build"
   elif [ -f configure ]; then
-    ./configure --prefix="$PREFIX" "${args[@]}"
+    sh ./configure --prefix="$PREFIX" "${args[@]}"
     make -j"$(nproc)" && make install DESTDIR="$dest"
   elif [ -f Makefile ]; then
     make -j"$(nproc)" PREFIX="$PREFIX" && make install DESTDIR="$dest" PREFIX="$PREFIX"
