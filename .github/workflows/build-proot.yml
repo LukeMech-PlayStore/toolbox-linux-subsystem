@@ -5,6 +5,7 @@ on:
     branches: [main]
     paths:
       - 'proot/**'
+      - 'config.yaml' # Its proot section (see prepare)
       - '.github/workflows/build-proot.yml'
   workflow_dispatch:
 
@@ -22,11 +23,32 @@ jobs:
     runs-on: ubuntu-latest
     outputs:
       version: ${{ steps.calc_ver.outputs.version }}
+      build: ${{ steps.changed.outputs.build }}
     steps:
       - name: Checkout
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           fetch-depth: 0 # Fetch all history for tags
+
+      - name: Check What Changed
+        id: changed
+        env:
+          BEFORE: ${{ github.event.before }}
+        run: |
+          # A push touching config.yaml only builds when its proot section or abis changed (not
+          # just the packages); run by hand, or when proot/ or this workflow changed, it always does
+          build=true
+          if [ "${{ github.event_name }}" = push ] && git cat-file -e "$BEFORE^{commit}" 2>/dev/null; then
+            others=$(git diff --name-only "$BEFORE" HEAD -- proot .github/workflows/build-proot.yml)
+            # Its section and the ABIs it's built for
+            old=$(git show "$BEFORE:config.yaml" 2>/dev/null | yq -o=json -I=0 '[.proot, .abis]' || echo none)
+            new=$(yq -o=json -I=0 '[.proot, .abis]' config.yaml)
+            if [ -z "$others" ] && [ "$old" = "$new" ]; then
+              build=false
+              echo "::notice::Only config.yaml's packages changed: no PRoot build"
+            fi
+          fi
+          echo "build=$build" >> $GITHUB_OUTPUT
 
       - name: Calculate Next Version
         id: calc_ver
@@ -59,6 +81,7 @@ jobs:
   build:
     name: Build All Archs
     needs: prepare
+    if: needs.prepare.outputs.build == 'true'
     runs-on: ubuntu-latest
     outputs:
       proot_ref: ${{ steps.versions.outputs.proot_ref }}
@@ -76,11 +99,9 @@ jobs:
 
       - name: Read Versions
         id: versions
-        working-directory: proot
         run: |
-          source ./config.sh
-          echo "proot_ref=$PROOT_REF" >> $GITHUB_OUTPUT
-          echo "talloc_version=$TALLOC_VERSION" >> $GITHUB_OUTPUT
+          echo "proot_ref=$(yq -r '.proot.ref' config.yaml)" >> $GITHUB_OUTPUT
+          echo "talloc_version=$(yq -r '.proot.talloc' config.yaml)" >> $GITHUB_OUTPUT
 
       - name: Build PRoot
         env:
@@ -89,7 +110,7 @@ jobs:
           cd proot
           
           # Make our new consolidated scripts executable
-          chmod +x build.sh config.sh ndk-setup.sh
+          chmod +x build.sh ndk-setup.sh
           
           # Run the main build orchestrator
           ./build.sh

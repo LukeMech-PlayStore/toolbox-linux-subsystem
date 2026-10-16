@@ -1,3 +1,27 @@
+# What both workflows build: PRoot (proot:, build-proot.yml) and the rootfs (packages:, build-rootfs.yml),
+# each for every ABI here
+
+# Every ABI Google Play supports (the app's jniLibs folders), with what each build calls it:
+# - proot: the NDK's name for it (proot/ndk-setup.sh)
+# - termux: the rootfs is built in termux/termux-docker:<this> (Termux's name for it)
+# - runner: the GitHub runner running that image natively (x86 ones on x86_64, ARM ones on ARM)
+# The 64-bit ones are checked for 16 KB pages (32-bit ABIs never run with them)
+abis:
+  arm64-v8a:   { proot: arm64,  termux: aarch64, runner: ubuntu-24.04-arm }
+  armeabi-v7a: { proot: arm,    termux: arm,     runner: ubuntu-24.04-arm }
+  x86:         { proot: x86,    termux: i686,    runner: ubuntu-latest }
+  x86_64:      { proot: x86_64, termux: x86_64,  runner: ubuntu-latest }
+
+# PRoot and its loaders, cross-compiled with the NDK (proot/build.sh); the workflow runs when this
+# section, abis (or proot/) changes
+proot:
+  talloc: "2.5.0" # Statically linked
+  # A tag, a branch name (master) or a commit hash; the loaders are built from the same source, so
+  # they always match
+  repo: termux/proot
+  ref: v5.1.107.96
+  android_api: 29 # Android 10
+
 # The rootfs comes in parts, shipped in the app's jniLibs (lib*.so, so Android unpacks them with it):
 # - base (librootfs.tar.xz.so): what the extensions build on, unpacked when the app first starts
 # - extensions (libpackage-<name>.tar.xz.so): the programs a tool runs on, installed (from Play,
@@ -5,53 +29,56 @@
 # Each lists Termux packages and pip packages: they and their dependencies end up in it, minus
 # what the parts it builds on (requires, and always the base) have. What two extensions both need
 # goes to the one they both build on (the base if nothing else).
-base:
-  packages:
-    - dash # $PREFIX/bin/sh for anything shelling out (Android's sh can't run under proot on Samsung)
-
-extensions:
-  python: # Python, for the packages running on it
+# Each part has its own version: a release keeps a part's previous archive (and version) as long as
+# what goes into it is the same (see rootfs/release.py), so the app only updates what changed.
+packages:
+  base:
     packages:
-      - python
+      - dash # $PREFIX/bin/sh for anything shelling out (Android's sh can't run under proot on Samsung)
 
-  exiftool: # Metadata editor
-    packages:
-      - exiftool
+  extensions:
+    python: # Python, for the packages running on it
+      packages:
+        - python
 
-  qrcode: # QR generator
-    requires: [python]
-    packages:
-      # qrcode[pil]'s Pillow is built against these only (see pip_options)
-      - libjpeg-turbo
-      - zlib
-    pip:
-      - qrcode[pil]
+    exiftool: # Metadata editor
+      packages:
+        - exiftool
 
-  currencyconverter: # Currency converter
-    requires: [python]
-    pip:
-      - CurrencyConverter
+    qrcode: # QR generator
+      requires: [python]
+      packages:
+        # qrcode[pil]'s Pillow is built against these only (see pip_options)
+        - libjpeg-turbo
+        - zlib
+      pip:
+        - qrcode[pil]
 
-  ffmpeg: # yt-dlp's (merging, remuxing, audio conversion, thumbnails)
-    packages:
-      # Its audio encoders (see script)
-      - libmp3lame
-      - libopus
-    # Run after the rest is in place (rootfs/<script>): FFmpeg, built from source since Termux's
-    # pulls in ~390 MB of libraries
-    script: ffmpeg.sh
+    currencyconverter: # Currency converter
+      requires: [python]
+      pip:
+        - CurrencyConverter
 
-  ytdlp: # Media downloader
-    requires: [python, ffmpeg]
-    packages:
-      - quickjs-ng # qjs: yt-dlp's JavaScript runtime (YouTube's player challenges)
-    pip:
-      - yt-dlp[default] # default: yt-dlp-ejs, mutagen, brotli, ...
+    ffmpeg: # yt-dlp's (merging, remuxing, audio conversion, thumbnails)
+      packages:
+        # Its audio encoders (see script)
+        - libmp3lame
+        - libopus
+      # Run after the rest is in place (rootfs/<script>): FFmpeg, built from source since Termux's
+      # pulls in ~390 MB of libraries
+      script: ffmpeg.sh
 
-# For every pip install
-pip_options: --no-binary pillow # Built against the libs above only (Termux's python-pillow pulls in a lot more)
+    ytdlp: # Media downloader
+      requires: [python, ffmpeg]
+      packages:
+        - quickjs-ng # qjs: yt-dlp's JavaScript runtime (YouTube's player challenges)
+      pip:
+        - yt-dlp[default] # default: yt-dlp-ejs, mutagen, brotli, ...
 
-# Build-only dependencies
-# These are installed for setup/pip, but their files are not exported (python-pip is added when pip has packages).
-build_packages:
-  - build-essential # Clang, Make, pkg-config
+  # For every pip install
+  pip_options: --no-binary pillow # Built against the libs above only (Termux's python-pillow pulls in a lot more)
+
+  # Build-only dependencies
+  # These are installed for setup/pip, but their files are not exported (python-pip is added when pip has packages).
+  build_packages:
+    - build-essential # Clang, Make, pkg-config

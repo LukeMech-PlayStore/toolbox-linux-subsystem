@@ -1,8 +1,31 @@
 #!/bin/bash
 set -e
 
-# Load Configuration
-source ./config.sh
+# Versions and targets: config.yaml's proot section (CONFIG to read another file)
+CONFIG="${CONFIG:-$(dirname "$(readlink -f "$0")")/../config.yaml}"
+proot_cfg() {
+    local value
+    value=$(yq -r ".proot.$1" "$CONFIG")
+    if [ -z "$value" ] || [ "$value" = null ]; then
+        echo "Error: proot.$1 is missing in $CONFIG" >&2
+        exit 1
+    fi
+    echo "$value"
+}
+TALLOC_VERSION=$(proot_cfg talloc)
+PROOT_REPO=$(proot_cfg repo)
+PROOT_REF=$(proot_cfg ref)
+ANDROID_API_LEVEL=$(proot_cfg android_api)
+# Every ABI (config.yaml's abis) as "<jniLibs folder>:<NDK arch>"
+TARGETS=$(yq -r '.abis | to_entries[] | .key + ":" + .value.proot' "$CONFIG")
+[ -n "$TARGETS" ] || { echo "Error: no abis in $CONFIG" >&2; exit 1; }
+
+# --- Directories ---
+BUILD_DIR="${PWD}/build"
+SRC_DIR="${PWD}/src"
+OUT_DIR="${PWD}/out"
+PATCH_DIR="${PWD}/patches"
+
 source ./ndk-setup.sh
 
 # --- Functions ---
@@ -71,8 +94,8 @@ EOF
 }
 
 build_arch() {
-    local ARCH=$1
-    echo "==> Building for Architecture: $ARCH"
+    local ARCH=$1 ABI_DIR=$2
+    echo "==> Building for Architecture: $ARCH ($ABI_DIR)"
 
     # Define paths for this arch
     local ARCH_BUILD_DIR="$BUILD_DIR/$ARCH"
@@ -126,10 +149,6 @@ build_arch() {
     make -j$(nproc) V=1 GIT=false proot > /dev/null
 
     # 4. Packaging
-    local ABI_DIR="$ARCH"
-    if [ "$ARCH" == "arm64" ]; then ABI_DIR="arm64-v8a"; fi
-    if [ "$ARCH" == "arm" ]; then ABI_DIR="armeabi-v7a"; fi
-
     local FINAL_OUT="$OUT_DIR/$ABI_DIR"
     rm -rf "$FINAL_OUT"
     mkdir -p "$FINAL_OUT"
@@ -166,8 +185,8 @@ build_arch() {
 
 prepare_sources
 
-for ARCH in $TARGET_ARCHS; do
-    build_arch "$ARCH"
+for TARGET in $TARGETS; do
+    build_arch "${TARGET#*:}" "${TARGET%%:*}"
 done
 
 echo "=========================================="

@@ -5,7 +5,7 @@
 # and the extensions), each holding only its packages' files (with their dependencies, minus what
 # the parts it builds on have) and what pip added for it - not the rest of the Termux bootstrap
 # (apt, bash, ...). The Termux prefix goes to usr/; the app binds it back to $PREFIX inside proot.
-# Manifests (one per part) go to ~/out.
+# Manifests and components (what the app tells a part holds), one of each per part, go to ~/out.
 set -euo pipefail
 
 IMAGE_VERSION=$1
@@ -119,6 +119,7 @@ for p in "${PARTS[@]}"; do
     STAGE="$STAGE" MANIFEST="$MANIFEST" COMPONENTS="$COMPONENTS" bash "$HERE/$script"
   fi
   sort -o "$MANIFEST" "$MANIFEST"
+  cp "$COMPONENTS" "$OUT/components-$p.txt"
   echo "$p: $(find "$STAGE" -type f -o -type l | wc -l) files from $(wc -l < "$WORK/$p.apt.own") packages and $(wc -l < "$WORK/$p.pip.own") from pip"
 done
 
@@ -148,7 +149,7 @@ for p in "${PARTS[@]:1}"; do
   mv "$WORK/$p.list" "$ROOT/$p/etc/extensions/$p.files"
 done
 
+# The base's version, which the app keeps once it's unpacked; what the parts are (versions, sizes,
+# what they hold) the release tells the app (parts.json, see rootfs/release.py)
 mkdir -p "$ROOT/base/etc" "$ROOT/base/root" "$ROOT/base/tmp" "$ROOT/base/usr/tmp"
 echo "$IMAGE_VERSION" > "$ROOT/base/etc/image-version"
-python3 "$HERE/parts.py" index "$WORK/config.json" "$WORK" "$ROOT" > "$ROOT/base/etc/extensions.json"
-cat "$ROOT/base/etc/extensions.json"

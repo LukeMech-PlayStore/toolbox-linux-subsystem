@@ -5,10 +5,6 @@
       <part>.apt.own / <part>.pip.own (what goes into it) and <part>.ancestors (the parts it
       builds on). A package goes to the one part needing it that doesn't build on another one
       needing it too; needed by parts apart, it goes to the part they all build on.
-
-  parts.py index <config.json> <work dir> <stage dir>
-      Prints the base's etc/extensions.json: per extension, what it requires, its size unpacked
-      and what it holds (<part>.components), for the app.
 """
 import json
 import os
@@ -81,33 +77,6 @@ def split(config_path, work):
             f.write("".join(f"{a}\n" for a in order))
 
 
-def size(path):
-    total = 0
-    for root, _, files in os.walk(path):
-        for name in files:
-            full = os.path.join(root, name)
-            if not os.path.islink(full):
-                total += os.path.getsize(full)
-    return total
-
-
-def index(config_path, work, stage):
-    extensions, _, requires = load(config_path)
-    out = {}
-    for name in extensions:
-        components = []
-        path = os.path.join(work, f"{name}.components")
-        if os.path.exists(path):
-            with open(path, encoding="utf-8") as f:
-                components = [line.strip() for line in f if line.strip()]
-        out[name] = {
-            "requires": requires[name],
-            "size": size(os.path.join(stage, name)),
-            "components": components,
-        }
-    print(json.dumps(out, indent=2))
-
-
 if __name__ == "__main__":
     command, *args = sys.argv[1:]
-    {"split": split, "index": index}[command](*args)
+    {"split": split}[command](*args)

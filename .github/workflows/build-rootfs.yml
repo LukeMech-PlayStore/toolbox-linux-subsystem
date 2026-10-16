@@ -21,11 +21,20 @@ jobs:
     runs-on: ubuntu-latest
     outputs:
       version: ${{ steps.calc_ver.outputs.version }}
+      matrix: ${{ steps.abis.outputs.matrix }}
     steps:
       - name: Checkout
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           fetch-depth: 0
+
+      - name: Read ABIs
+        id: abis
+        run: |
+          # One build per ABI of config.yaml's abis, in the image and on the runner it says; the
+          # 64-bit ones are checked for 16 KB pages (32-bit ABIs never run with them)
+          echo "matrix=$(yq -o=json -I=0 '[.abis | to_entries[] | {"abi": .key, "arch": .value.termux,
+            "runner": .value.runner, "check_16k": (.key | test("64"))}]' config.yaml)" >> $GITHUB_OUTPUT
 
       - name: Calculate Next Version
         id: calc_ver
@@ -55,24 +64,7 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        include:
-          - arch: x86_64
-            image: x86_64
-            runner: ubuntu-latest
-            check_16k: true
-          - arch: aarch64
-            image: aarch64
-            runner: ubuntu-24.04-arm
-            check_16k: true
-          # 32-bit ABIs never run with 16 KB pages
-          - arch: arm
-            image: arm
-            runner: ubuntu-24.04-arm
-            check_16k: false
-          - arch: x86
-            image: i686
-            runner: ubuntu-latest
-            check_16k: false
+        include: ${{ fromJSON(needs.prepare.outputs.matrix) }}
 
     steps:
       - name: Checkout
@@ -80,12 +72,12 @@ jobs:
 
       - name: Build Rootfs
         env:
-          IMAGE: termux/termux-docker:${{ matrix.image }}
+          IMAGE: termux/termux-docker:${{ matrix.arch }}
           IMAGE_VERSION: ${{ needs.prepare.outputs.version }}
           ARCH: ${{ matrix.arch }}
         run: |
           mkdir -p "out/$ARCH" manifests
-          CONFIG=$(yq -o=json -I=0 '.' config.yaml)
+          CONFIG=$(yq -o=json -I=0 '.packages' config.yaml)
 
           # Privileged: ARM images need personality(), even on ARM hosts (see termux-docker's README)
           docker run --privileged --name rootfs -v "$PWD/rootfs:/build:ro" "$IMAGE" \
@@ -107,6 +99,8 @@ jobs:
           done
           for job in $(jobs -p); do wait "$job"; done
           du -sh stage/* out/"$ARCH"/*
+          # Each part's size unpacked and as an archive, and what it holds, for parts.json
+          python3 rootfs/release.py sizes stage "out/$ARCH" manifests > "out/sizes-$ARCH.json"
 
       - name: Check 16 KB Alignment
         if: matrix.check_16k
@@ -148,12 +142,12 @@ jobs:
           path: current_assets
           merge-multiple: true
 
-      - name: Fetch Previous Release Manifests
+      - name: Fetch Previous Release
         id: fetch_prev
         env:
           GH_TOKEN: ${{ github.token }}
         run: |
-          mkdir -p prev_assets
+          mkdir -p prev_assets prev_package
 
           # Latest rootfs release (not proot-*)
           LATEST_TAG=$(gh release list --limit 20 --exclude-drafts --exclude-pre-releases --json tagName \
@@ -168,16 +162,24 @@ jobs:
             echo "is_initial=false" >> $GITHUB_OUTPUT
             # One per part (earlier releases: per part and ABI); a part missing there counts as all new
             gh release download "$LATEST_TAG" -p 'manifest-*.txt' -D prev_assets || echo "No manifests in $LATEST_TAG"
+            # Its parts, to keep those that didn't change (earlier releases have no parts.json: all are new)
+            if gh release download "$LATEST_TAG" -p parts.json -D prev_package; then
+              gh release download "$LATEST_TAG" -p rootfs.tar.gz -D prev_assets
+              tar -xzf prev_assets/rootfs.tar.gz -C prev_package --exclude parts.json
+            else
+              echo "No parts.json in $LATEST_TAG: every part is built anew"
+            fi
           fi
 
       - name: Merge Manifests
         run: |
           # One per part: what all ABIs have as it is, what differs (e.g. Termux's repo not synced
           # for all of them yet) with its ABI, e.g. "python-3.13.7 @arm"
-          ARCHES="x86_64 aarch64 arm x86"
+          ARCHES=$(yq -r '.abis[].termux' config.yaml)
           mkdir -p manifests
-          for first in current_assets/manifest-*-x86_64.txt; do
-            part=$(basename "$first" | sed 's|^manifest-||; s|-x86_64\.txt$||')
+          FIRST=$(echo "$ARCHES" | head -n 1)
+          for first in current_assets/manifest-*-"$FIRST".txt; do
+            part=$(basename "$first" | sed "s|^manifest-||; s|-$FIRST\.txt\$||")
             common=$(cat "$first")
             for arch in $ARCHES; do
               common=$(comm -12 <(echo "$common") <(sort "current_assets/manifest-$part-$arch.txt"))
@@ -190,10 +192,19 @@ jobs:
             } | sort > "manifests/manifest-$part.txt"
           done
 
+      - name: Pick Parts
+        run: |
+          # A part keeps the previous release's archive and version unless what goes into it
+          # changed (rootfs/release.py); final_package gets every ABI's archives and parts.json
+          yq -o=json '.' config.yaml > config.json
+          python3 rootfs/release.py merge "${{ needs.prepare.outputs.version }}" config.json \
+            current_assets manifests prev_package final_package
+          mv final_package/changed.txt changed.txt
+          cp final_package/parts.json parts.json
+
       - name: Generate Changelog
         id: changelog
         run: |
-          CHANGES_DETECTED="false"
           # Parts as built, the base first
           PARTS=$(ls manifests/manifest-*.txt | sed 's|.*/manifest-||; s|\.txt$||' \
             | awk '{ print ($0 == "base" ? 0 : 1), $0 }' | sort | cut -d' ' -f2)
@@ -244,18 +255,29 @@ jobs:
             unset OLD NEW
 
             if [ -n "$ROWS" ]; then
-              CHANGES_DETECTED="true"
               if [ "$part" = base ]; then lib=librootfs.tar.xz.so; else lib="libpackage-$part.tar.xz.so"; fi
               FINAL_LOG+="### 📦 $part (\`$lib\`)"$'\n\n'"| ● | Package | Old | New |"$'\n'"|:--:|:--------|:----|:-----|"$'\n'"$ROWS"$'\n\n'
             fi
           done
 
+          # A release is needed when a part got a new version (its packages, its config or the
+          # build scripts changed); the others ship as they were
+          if [ -s changed.txt ]; then CHANGES_DETECTED="true"; else CHANGES_DETECTED="false"; fi
+          VERSIONS="| Part | Version | |"$'\n'"|:-----|:--------|:--:|"$'\n'
+          for part in $(jq -r '.parts | keys_unsorted[]' parts.json); do
+            version=$(jq -r --arg p "$part" '.parts[$p].version' parts.json)
+            mark=""
+            if grep -qx "$part" changed.txt; then mark="🆕"; fi
+            VERSIONS+="| \`$part\` | \`$version\` | $mark |"$'\n'
+          done
+
           if [ "${{ steps.fetch_prev.outputs.is_initial }}" == "true" ]; then
             CHANGES_DETECTED="true"
             FINAL_LOG="Initial Release."
-          elif [ "$CHANGES_DETECTED" == "true" ]; then
+          elif [ -n "$FINAL_LOG" ]; then
             FINAL_LOG="## 🚀 Changes"$'\n\n'"$FINAL_LOG"
           fi
+          FINAL_LOG="## 🧩 Parts"$'\n\n'"$VERSIONS"$'\n'"$FINAL_LOG"
 
           if [ "${{ inputs.force_release }}" == "true" ]; then
             CHANGES_DETECTED="true"
@@ -267,19 +289,10 @@ jobs:
       - name: Package Artifacts
         if: steps.changelog.outputs.needed == 'true'
         run: |
-          # Every part of an architecture into its ABI's jniLibs folder
-          package_arch() {
-            mkdir -p "final_package/$2"
-            cp current_assets/"$1"/*.so "final_package/$2/"
-          }
-
-          package_arch "x86_64"  "x86_64"
-          package_arch "aarch64" "arm64-v8a"
-          package_arch "arm"     "armeabi-v7a"
-          package_arch "x86"     "x86"
-
+          # Every ABI's jniLibs folder (the parts as Pick Parts chose them) and parts.json, for the app
           echo "==> Creating Master Archive..."
           tar -czf rootfs.tar.gz -C final_package .
+          tar -tzvf rootfs.tar.gz
 
       - name: Push Release
         if: steps.changelog.outputs.needed == 'true'
@@ -290,10 +303,11 @@ jobs:
           body: |
               ## Automated Build ${{ needs.prepare.outputs.version }}
               Base: [Termux packages](https://github.com/termux/termux-packages)
-              ABIs: `armeabi-v7a`, `arm64-v8a`, `x86`, `x86_64`
+              ABIs: ${{ join(fromJSON(needs.prepare.outputs.matrix).*.abi, ', ') }}
               
               ${{ steps.changelog.outputs.full_log }}
           files: |
             rootfs.tar.gz
+            parts.json
             manifests/manifest-*.txt
           make_latest: true
