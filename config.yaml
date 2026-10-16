@@ -31,8 +31,8 @@ proot:
 #
 # A part says only what it is for; where its dependencies go follows from the tree:
 # - packages / pip: the Termux and pip packages it's for (its own programs, data and modules)
-# - requires: the parts it builds on (always the base too), listed before it; the app installs
-#   those first
+# - requires: the parts it builds on (the base, or parts building on it), listed before it; the app
+#   installs those first, and lists them with it
 # - pip_libs: Termux libraries its pip packages are compiled against (installed before pip)
 # - pip_options: options for pip installing them
 # - rebuild: Termux packages built with Termux's recipe of them, without some of its configure
@@ -52,6 +52,7 @@ packages:
       - dash # $PREFIX/bin/sh for anything shelling out (Android's sh can't run under proot on Samsung)
 
   python: # Python, for the tools running on it
+    requires: [base]
     packages:
       - python
 
@@ -69,11 +70,13 @@ packages:
     pip_options: --no-binary pillow
 
   exiftool: # Metadata editor
+    requires: [base]
     packages:
       - exiftool
 
   ffmpeg: # Video encoder, and yt-dlp's (merging, remuxing, audio conversion, thumbnails)
     # Not on Python: GLib's and libplacebo's packages depend on it, but nothing FFmpeg links does
+    requires: [base]
     packages:
       - ffmpeg
     # Built with Termux's recipe (its source, patches and options: x264, x265, VP9, SVT-AV1, dav1d,
