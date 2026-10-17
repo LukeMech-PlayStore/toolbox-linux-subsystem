@@ -115,6 +115,20 @@ jobs:
           # Each part's size unpacked and as an archive, and what it holds, for parts.json
           python3 rootfs/release.py sizes stage "out/$ARCH" manifests > "out/sizes-$ARCH.json"
 
+      - name: Check Android Libraries
+        run: |
+          # Nothing may link Android's framework libraries: libandroid (and what links it) pulls in
+          # libhwui, whose vendor libraries a program run from /data can't find on some devices
+          bad=0
+          while IFS= read -r -d '' f; do
+            needed=$(readelf -dW "$f" 2>/dev/null | grep -oE '\[(libandroid|libmediandk|libhwui|libcamera2ndk)\.so\]' | tr '\n' ' ' || true)
+            if [ -n "$needed" ]; then
+              echo "::error::${f#stage/} links $needed"
+              bad=1
+            fi
+          done < <(find stage -type f -size +0 -print0)
+          exit $bad
+
       - name: Check 16 KB Alignment
         if: matrix.check_16k
         run: |

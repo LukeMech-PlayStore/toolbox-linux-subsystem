@@ -80,11 +80,16 @@ packages:
     packages:
       - ffmpeg
     # Built with Termux's recipe (its source, patches and options: x264, x265, VP9, SVT-AV1, dav1d,
-    # Opus, MP3, Vorbis, WebP, subtitles, MediaCodec), without what the tools don't use: Termux's
-    # links every one of these, so it can't start without them (~35 MB)
+    # Opus, MP3, Vorbis, WebP, subtitles), without what the tools don't use: Termux's links every
+    # one of these, so it can't start without them (~35 MB)
     rebuild:
       ffmpeg:
         drop:
+          # Android's hardware codecs (no tool uses them): they link libandroid, whose libhwui needs
+          # what the device's maker added, where the linker doesn't look for a program run from /data
+          # (MediaTek: "vendor.mediatek.hardware.mbrain-V2-ndk.so" not found), so FFmpeg can't start
+          - --enable-mediacodec
+          - --enable-jni # Only MediaCodec needs it
           - --enable-libaom # More AV1 encoders: SVT-AV1 is the one used
           - --enable-librav1e
           - --enable-libplacebo # Vulkan filters (no Vulkan under proot), with glslang
