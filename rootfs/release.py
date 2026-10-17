@@ -14,8 +14,9 @@
       <config.json>: config.yaml as JSON (its abis and packages). <current dir>: <arch>/<lib> and
       sizes-<arch>.json of this build (arch: the abi's termux name). <previous dir>: the previous
       release's parts.json and its archives in <abi>/<lib> (both may be missing: then all is new).
-      Writes <out dir>/<abi>/<lib>, <out dir>/parts.json (the release's, also shipped to the app)
-      and <out dir>/changed.txt (the parts with a new version, one per line).
+      Writes <out dir>/<abi>/<lib>, <out dir>/parts.json (the release's, for the next one),
+      <out dir>/<abi>/libparts.json.so (the app's: that ABI's alone, without the hashes) and
+      <out dir>/changed.txt (the parts with a new version, one per line).
 """
 import hashlib
 import json
@@ -31,6 +32,10 @@ SHARED_SCRIPTS = ["build.sh", "parts.py", "pip-files.py", "rebuild-16k.sh", "ter
 
 def lib_of(part):
     return f"libpackage-{part}.tar.xz.so"
+
+
+# What the app knows of the parts (parts.json, one ABI's), in each ABI's folder with the archives
+PARTS_LIB = "libparts.json.so"
 
 
 def read_lines(path):
@@ -174,6 +179,19 @@ def merge(tag, config_path, current, manifests, previous, out):
     with open(os.path.join(out, "parts.json"), "w", encoding="utf-8") as f:
         json.dump({"release": tag, "parts": index}, f, indent=2)
         f.write("\n")
+    # The app's: per ABI, next to its archives (a native library, so each device gets only its own),
+    # just what the app reads of each part
+    for abi in abis.values():
+        own = {
+            part: {
+                "version": entry["version"],
+                "requires": entry["requires"],
+                "abis": {abi: entry["abis"][abi]},
+            }
+            for part, entry in index.items()
+        }
+        with open(os.path.join(out, abi, PARTS_LIB), "w", encoding="utf-8") as f:
+            json.dump({"release": tag, "parts": own}, f, separators=(",", ":"))
     with open(os.path.join(out, "changed.txt"), "w", encoding="utf-8") as f:
         f.write("".join(f"{p}\n" for p in changed))
 
