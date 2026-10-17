@@ -39,9 +39,9 @@ PRUNE_PATTERNS=(
   # Tools nothing calls (only python3, perl, exiftool, qjs and pip's scripts are)
   'bin/(cpan|corelist|enc2xs|encguess|h2ph|h2xs|instmodsh|json_pp|libnetcfg|perldoc|perlivp|perlthanks|perlbug|piconv|pl2pm|pod2[a-z]+|podchecker|prove|ptar[a-z]*|py3clean|py3compile|pydoc[.0-9]*|python[.0-9]*-config|shasum|splain|streamzip|xsubpp|zipdetails|gdbm[a-z_]*|zstd[a-z]*|unzstd|ncursesw6-config|clear|tset|reset|tabs|tic|toe|tput|infocmp|captoinfo|infotocap|idle3[.0-9]*)$'
   # Unused by the app's features (exiftool only needs Encode for UTF-8; Geolocation.dat is
-  # for its -geolocation option; no script uses sqlite)
+  # for its -geolocation option, Lang/ its tag names translated, for -lang; no script uses sqlite)
   "${PERL}Encode/(JP|KR|CN|TW)(/|\.pm$)" "${PERL}Unicode/Collate(/|\.pm$)"
-  'lib/perl5/site_perl/[^/]+/Image/ExifTool/Geolocation\.dat$'
+  'lib/perl5/site_perl/[^/]+/Image/ExifTool/(Geolocation\.dat|Lang/)'
   'lib/libsqlite3[^/]*$' 'lib/python3[^/]*/(sqlite3/|lib-dynload/_sqlite3)'
   # Terminal bits (REPL line editing, curses) and gdbm, for nothing run non-interactively
   'lib/(libncurses|libtinfo|libform|libmenu|libpanel|libreadline|libhistory|libgdbm)[^/]*$'

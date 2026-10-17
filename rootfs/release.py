@@ -10,7 +10,9 @@
       previous release has, or whose files came out the same as there for every ABI (e.g. the
       build scripts changed, but not what it gets), keeps that release's archives and version,
       byte for byte: the app (and Play) only updates the parts that changed. The others get <tag>
-      as their version and this build's archives.
+      as their version and this build's archives. Packed differently than there (pack.sh), a part
+      with the same files keeps its version (the app has nothing to unpack again) but gets this
+      build's archives.
       <config.json>: config.yaml as JSON (its abis and packages). <current dir>: <arch>/<lib> and
       sizes-<arch>.json of this build (arch: the abi's termux name). <previous dir>: the previous
       release's parts.json and its archives in <abi>/<lib> (both may be missing: then all is new).
@@ -86,6 +88,11 @@ def fingerprint(part, config, manifest):
     return h.hexdigest()
 
 
+def packing():
+    """How the archives are made of a part's files (not what's in them): a change repacks every part."""
+    return hashlib.sha256(read_file(os.path.join(HERE, "pack.sh"))).hexdigest()
+
+
 # Differs in every release's core, the rest being the same (see build.sh)
 OWN_VERSION = {"core": {"etc/image-version"}}
 
@@ -134,6 +141,7 @@ def merge(tag, config_path, current, manifests, previous, out):
 
     index = {}
     changed = []
+    packed = packing()
     for part in parts:
         manifest = "\n".join(read_lines(os.path.join(manifests, f"manifest-{part}.txt")))
         fp = fingerprint(part, config, manifest)
@@ -145,16 +153,28 @@ def merge(tag, config_path, current, manifests, previous, out):
             and all(os.path.exists(os.path.join(previous, abi, lib)) for abi in abis.values())
         )
         same_input = complete and prev.get("hash") == fp
-        same_files = complete and not same_input and all(
+        # Earlier releases have no packing: all were packed otherwise
+        same_packing = complete and prev.get("packing") == packed
+        # Repacked, the same input isn't enough: the archive shipped is this build's, so its files are compared
+        same_files = complete and not (same_input and same_packing) and all(
             content(os.path.join(previous, abi, lib), part) == content(os.path.join(current, arch, lib), part)
             for arch, abi in abis.items()
         )
-        reuse = same_input or same_files
+        reuse = same_packing and (same_input or same_files)
+        repacked = not reuse and same_files
         for arch, abi in abis.items():
             os.makedirs(os.path.join(out, abi), exist_ok=True)
             source = os.path.join(previous, abi, lib) if reuse else os.path.join(current, arch, lib)
             shutil.copyfile(source, os.path.join(out, abi, lib))
-        if reuse:
+        if repacked:
+            # Its version stays (the same files), its sizes are this build's archives'
+            entry = {
+                "version": prev["version"],
+                "hash": fp,
+                "abis": {abi: built[arch][part] for arch, abi in abis.items()},
+            }
+            print(f"{part}: same files, repacked, keeps {prev['version']}")
+        elif reuse:
             entry = dict(prev)
             # Known by what goes into it now, for the next release
             entry["hash"] = fp
@@ -171,6 +191,7 @@ def merge(tag, config_path, current, manifests, previous, out):
             }
             changed.append(part)
             print(f"{part}: {prev['version'] if prev else 'new'} -> {tag}")
+        entry["packing"] = packed
         # What it builds on is the config's, always (it's no archive's)
         entry["requires"] = [] if part == "core" else (extensions[part] or {}).get("requires") or []
         entry["lib"] = lib

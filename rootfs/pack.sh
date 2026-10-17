@@ -1,0 +1,19 @@
+#!/bin/bash
+# Run by build.yml: packs a part's files into its archive, as the app unpacks it (XZ for Java).
+#   pack.sh <part dir> <arch (termux's name)> <archive>
+# xz's branch-call filter for the ABI's code turns its relative calls absolute, so repeated calls
+# match (3-5% smaller with ELFs; nothing to the pure-Python parts), and its literal-position bits
+# follow the instruction size (4 bytes on arm64, 2 with Thumb-2: Termux's arm). Measured on the
+# 26.10.17 parts. A change here repacks every part (rootfs/release.py: packing)
+set -euo pipefail
+
+case "$2" in
+  aarch64) xz_opts=(--arm64 --lzma2=preset=9e,lc=2,lp=2) ;;
+  arm) xz_opts=(--armthumb --lzma2=preset=9e,lp=1) ;;
+  i686 | x86_64) xz_opts=(--x86 --lzma2=preset=9e) ;;
+  *) echo "pack.sh: no filter for $2" >&2; exit 1 ;;
+esac
+
+# One -9e block (192 MB) holds a whole part, so xz can't split it over threads: -T1, and the parts
+# are packed side by side instead
+tar --owner=0 --group=0 --numeric-owner -cf - -C "$1" . | xz "${xz_opts[@]}" -T1 -c > "$3"
