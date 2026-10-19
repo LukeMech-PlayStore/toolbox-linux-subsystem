@@ -148,7 +148,7 @@ packages:
   jdk25: # Java 25: Minecraft 26.1 and later need it (and runs every version from 1.17)
     requires: [core]
     # Termux doesn't build OpenJDK 25 for x86 (upstream dropped 32-bit x86): the part isn't there for
-    # it (see rootfs/release.py); Java 17 is
+    # it (see rootfs/release.py); Java 21 is
     abis: [arm64-v8a, armeabi-v7a, x86_64]
     packages:
       # Its programs are update-alternatives' links, which aren't exported: jdk.sh links bin/java-25
@@ -163,10 +163,10 @@ packages:
       - alsa-plugins
     script: jdk.sh
 
-  jdk17: # Java 17: Minecraft 1.17 to 1.20.4 (and their mod loaders), on every ABI (x86 too)
+  jdk21: # Java 21: Minecraft 1.17 to 1.21.x, on every ABI (x86 too: Java 25 isn't built for it)
     requires: [core]
     packages:
-      - openjdk-17 # bin/java-17 (jdk.sh)
+      - openjdk-21 # bin/java-21 (jdk.sh)
       - libc++ # As jdk25's
     exclude:
       - alsa-plugins # As jdk25's
