@@ -38,6 +38,9 @@ proot:
 # - rebuild: Termux packages built with Termux's recipe of them, without some of its configure
 #   options (rootfs/termux-build.sh): what they link of their dependencies follows
 # - exclude: dependencies to leave out (with what only they need)
+# - abis: the ABIs it's built for (abis' names above), when not all of them: e.g. Termux doesn't
+#   build its package for one; the app leaves it (and its tools) out there
+# - script: run on the part's files once they're exported (rootfs/<script>, with STAGE: its folder)
 # Everything a part's packages use comes along, and only that: the libraries they link, the
 # interpreters their scripts run, the data those come with (rootfs/parts.py linked). Termux's
 # packages depend on a lot only their tools or their building need; that stays out. What several
@@ -137,6 +140,19 @@ packages:
       # doing anything. The wheel has them (and the solver's scripts)
       - yt-dlp
       - requests
+
+  minecraft: # Minecraft server
+    requires: [core]
+    # Termux doesn't build OpenJDK 25 for x86 (upstream dropped 32-bit x86): the part (and the tool)
+    # isn't there for it, see rootfs/release.py
+    abis: [arm64-v8a, armeabi-v7a, x86_64]
+    packages:
+      # Minecraft 26.1 and later need Java 25 (older ones from 1.17 run on it too); its programs are
+      # update-alternatives' links, which aren't exported: minecraft.sh links bin/java
+      - openjdk-25
+      # Cloudflare Tunnel, for players outside the phone's network (with the Modflared mod)
+      - cloudflared
+    script: minecraft.sh
 
 # Only for building: installed when pip has packages, never in a part (left out with what only
 # they need, even as a dependency, as python-yt-dlp's of python-pip)

@@ -13,6 +13,8 @@
       as their version and this build's archives. Packed differently than there (pack.sh), a part
       with the same files keeps its version (the app has nothing to unpack again) but gets this
       build's archives.
+      A part built for some ABIs only (its abis in config.yaml) is in those alone, and in their
+      libparts.json.so alone.
       <config.json>: config.yaml as JSON (its abis and packages). <current dir>: <arch>/<lib> and
       sizes-<arch>.json of this build (arch: the abi's termux name). <previous dir>: the previous
       release's parts.json and its archives in <abi>/<lib> (both may be missing: then all is new).
@@ -143,14 +145,17 @@ def merge(tag, config_path, current, manifests, previous, out):
     changed = []
     packed = packing()
     for part in parts:
+        # The ABIs it's built for (its abis, else all), the build's arch -> ABI
+        only = (extensions.get(part) or {}).get("abis")
+        part_abis = {arch: abi for arch, abi in abis.items() if not only or abi in only}
         manifest = "\n".join(read_lines(os.path.join(manifests, f"manifest-{part}.txt")))
         fp = fingerprint(part, config, manifest)
         lib = lib_of(part)
         prev = prev_index.get(part)
         complete = (
             prev is not None
-            and set(prev.get("abis", {})) == set(abis.values())
-            and all(os.path.exists(os.path.join(previous, abi, lib)) for abi in abis.values())
+            and set(prev.get("abis", {})) == set(part_abis.values())
+            and all(os.path.exists(os.path.join(previous, abi, lib)) for abi in part_abis.values())
         )
         same_input = complete and prev.get("hash") == fp
         # Earlier releases have no packing: all were packed otherwise
@@ -158,11 +163,11 @@ def merge(tag, config_path, current, manifests, previous, out):
         # Repacked, the same input isn't enough: the archive shipped is this build's, so its files are compared
         same_files = complete and not (same_input and same_packing) and all(
             content(os.path.join(previous, abi, lib), part) == content(os.path.join(current, arch, lib), part)
-            for arch, abi in abis.items()
+            for arch, abi in part_abis.items()
         )
         reuse = same_packing and (same_input or same_files)
         repacked = not reuse and same_files
-        for arch, abi in abis.items():
+        for arch, abi in part_abis.items():
             os.makedirs(os.path.join(out, abi), exist_ok=True)
             source = os.path.join(previous, abi, lib) if reuse else os.path.join(current, arch, lib)
             shutil.copyfile(source, os.path.join(out, abi, lib))
@@ -171,7 +176,7 @@ def merge(tag, config_path, current, manifests, previous, out):
             entry = {
                 "version": prev["version"],
                 "hash": fp,
-                "abis": {abi: built[arch][part] for arch, abi in abis.items()},
+                "abis": {abi: built[arch][part] for arch, abi in part_abis.items()},
             }
             print(f"{part}: same files, repacked, keeps {prev['version']}")
         elif reuse:
@@ -181,13 +186,13 @@ def merge(tag, config_path, current, manifests, previous, out):
             # What it holds as this build lists it (the list isn't in the archive: e.g. now all its
             # packages, where earlier releases listed only its own); sizes stay the archive's
             entry["abis"] = {abi: {**prev["abis"][abi], "components": built[arch][part]["components"]}
-                             for arch, abi in abis.items()}
+                             for arch, abi in part_abis.items()}
             print(f"{part}: {'same files' if same_files else 'unchanged'}, keeps {prev['version']}")
         else:
             entry = {
                 "version": tag,
                 "hash": fp,
-                "abis": {abi: built[arch][part] for arch, abi in abis.items()},
+                "abis": {abi: built[arch][part] for arch, abi in part_abis.items()},
             }
             changed.append(part)
             print(f"{part}: {prev['version'] if prev else 'new'} -> {tag}")
@@ -210,6 +215,7 @@ def merge(tag, config_path, current, manifests, previous, out):
                 "abis": {abi: entry["abis"][abi]},
             }
             for part, entry in index.items()
+            if abi in entry["abis"]
         }
         with open(os.path.join(out, abi, PARTS_LIB), "w", encoding="utf-8") as f:
             json.dump({"release": tag, "parts": own}, f, separators=(",", ":"))

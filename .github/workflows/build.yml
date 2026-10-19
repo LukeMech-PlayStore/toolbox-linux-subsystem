@@ -89,9 +89,11 @@ jobs:
           IMAGE: termux/termux-docker:${{ matrix.arch }}
           IMAGE_VERSION: ${{ needs.prepare.outputs.version }}
           ARCH: ${{ matrix.arch }}
+          ABI: ${{ matrix.abi }}
         run: |
           mkdir -p "out/$ARCH" manifests
-          CONFIG=$(yq -o=json -I=0 '.' config.yaml)
+          # Only the parts built for this ABI (a part's abis; all of them without)
+          CONFIG=$(yq -o=json -I=0 '.packages |= with_entries(select((.value.abis // [strenv(ABI)]) | any_c(. == strenv(ABI))))' config.yaml)
 
           # Privileged: ARM images need personality(), even on ARM hosts (see termux-docker's README)
           docker run --privileged --name rootfs -v "$PWD/rootfs:/build:ro" "$IMAGE" \
@@ -207,12 +209,15 @@ jobs:
       - name: Merge Manifests
         run: |
           # One per part: what all ABIs have as it is, what differs (e.g. Termux's repo not synced
-          # for all of them yet) with its ABI, e.g. "python-3.13.7 @arm"
-          ARCHES=$(yq -r '.abis[].termux' config.yaml)
+          # for all of them yet) with its ABI, e.g. "python-3.13.7 @arm". A part built for some ABIs
+          # only (its abis) over those
+          ALL_ARCHES=$(yq -r '.abis[].termux' config.yaml)
           mkdir -p manifests
-          FIRST=$(echo "$ARCHES" | head -n 1)
-          for first in current_assets/manifest-*-"$FIRST".txt; do
-            part=$(basename "$first" | sed "s|^manifest-||; s|-$FIRST\.txt\$||")
+          for part in $(yq -r '.packages | keys[]' config.yaml); do
+            ARCHES=$(for arch in $ALL_ARCHES; do
+              if [ -f "current_assets/manifest-$part-$arch.txt" ]; then echo "$arch"; fi
+            done)
+            first="current_assets/manifest-$part-$(echo "$ARCHES" | head -n 1).txt"
             common=$(cat "$first")
             for arch in $ARCHES; do
               common=$(comm -12 <(echo "$common") <(sort "current_assets/manifest-$part-$arch.txt"))

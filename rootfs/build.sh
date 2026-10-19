@@ -46,6 +46,8 @@ PRUNE_PATTERNS=(
   # Terminal bits (REPL line editing, curses) and gdbm, for nothing run non-interactively
   'lib/(libncurses|libtinfo|libform|libmenu|libpanel|libreadline|libhistory|libgdbm)[^/]*$'
   'lib/python3[^/]*/lib-dynload/(readline|_curses|_gdbm)[^/]*$' 'lib/python3[^/]*/curses/' 'share/(terminfo|tabset)/'
+  # OpenJDK: what only building and linking Java needs (jlink's modules, javac's symbols, its sources), docs, demos
+  'lib/jvm/[^/]+/(jmods|man|include|demo)/' 'lib/jvm/[^/]+/lib/(src\.zip|ct\.sym)$'
 )
 PRUNE="^($(IFS='|'; echo "${PRUNE_PATTERNS[*]}"))"
 
