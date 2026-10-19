@@ -41,7 +41,7 @@ proot:
 # - abis: the ABIs it's built for (abis' names above), when not all of them: e.g. Termux doesn't
 #   build its package for one; the app leaves it (and its tools) out there. A part building on one
 #   that isn't built for an ABI isn't either (say so). A tool can run on several parts (the
-#   Minecraft server: jdk and cloudflared), its pages a module of their own in the app
+#   Minecraft server: a jdk and cloudflared), its pages a module of their own in the app
 # - script: run on the part's files once they're exported (rootfs/<script>, with STAGE: its folder)
 # Everything a part's packages use comes along, and only that: the libraries they link, the
 # interpreters their scripts run, the data those come with (rootfs/parts.py linked). Termux's
@@ -143,14 +143,15 @@ packages:
       - yt-dlp
       - requests
 
-  jdk: # Java, for the tools running on it (the Minecraft server)
+  # Java, for the tools running on it (the Minecraft server): a part per version, installed by the
+  # tool when one of its servers needs it (the newest that runs it, or one already there)
+  jdk25: # Java 25: Minecraft 26.1 and later need it (and runs every version from 1.17)
     requires: [core]
-    # Termux doesn't build OpenJDK 25 for x86 (upstream dropped 32-bit x86): the part (and the tools
-    # on it) isn't there for it, see rootfs/release.py
+    # Termux doesn't build OpenJDK 25 for x86 (upstream dropped 32-bit x86): the part isn't there for
+    # it (see rootfs/release.py); Java 17 is
     abis: [arm64-v8a, armeabi-v7a, x86_64]
     packages:
-      # Minecraft 26.1 and later need Java 25 (older ones from 1.17 run on it too); its programs are
-      # update-alternatives' links, which aren't exported: jdk.sh links bin/java
+      # Its programs are update-alternatives' links, which aren't exported: jdk.sh links bin/java-25
       - openjdk-25
       # What libandroid-spawn (OpenJDK's) links, rebuilt for 16 KB pages (rootfs/rebuild-16k.sh):
       # Termux's package of it, built before its recipe said so, doesn't depend on it
@@ -160,6 +161,15 @@ packages:
       # and the codecs libsndfile links (FLAC, MP3, Opus, Vorbis), which went to the core as FFmpeg
       # has them too. alsa-lib stays (Java's libjsound links it; it's never loaded headless)
       - alsa-plugins
+    script: jdk.sh
+
+  jdk17: # Java 17: Minecraft 1.17 to 1.20.4 (and their mod loaders), on every ABI (x86 too)
+    requires: [core]
+    packages:
+      - openjdk-17 # bin/java-17 (jdk.sh)
+      - libc++ # As jdk25's
+    exclude:
+      - alsa-plugins # As jdk25's
     script: jdk.sh
 
   cloudflared: # Cloudflare Tunnel, for servers players reach from anywhere (the Minecraft server's)
