@@ -3,7 +3,7 @@
 It's Linux subsystem and proot builder.
 Builds a Termux-based subsystem and proot, both set up in `config.yaml`: its `packages` section (the rootfs, auto-updated) and its `proot` section (proot's versions). All the generated files are ready-to-paste into jniLibs in Android Studio app project.
 
-Both are built for every ABI Google Play supports: `armeabi-v7a`, `arm64-v8a`, `x86` and `x86_64` (`config.yaml`'s `abis`, with what each build calls them and the runner building them). A part can be built for some of them only (its `abis`), when Termux has no build of its package for the others: `minecraft` (OpenJDK 25 and cloudflared, for the Minecraft server) isn't built for `x86`, which OpenJDK dropped. That ABI's build and its `libparts.json.so` leave it out, and so the app leaves out the tool.
+Both are built for every ABI Google Play supports: `armeabi-v7a`, `arm64-v8a`, `x86` and `x86_64` (`config.yaml`'s `abis`, with what each build calls them and the runner building them). A part can be built for some of them only (its `abis`), when Termux has no build of its package for the others: `jdk` (OpenJDK 25) isn't built for `x86`, which OpenJDK dropped. That ABI's build and its `libparts.json.so` leave it out, and so the app leaves out the tools on it (the Minecraft server, on `jdk` and `cloudflared`).
 
 ## Rootfs
 

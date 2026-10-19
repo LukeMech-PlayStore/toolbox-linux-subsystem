@@ -39,7 +39,9 @@ proot:
 #   options (rootfs/termux-build.sh): what they link of their dependencies follows
 # - exclude: dependencies to leave out (with what only they need)
 # - abis: the ABIs it's built for (abis' names above), when not all of them: e.g. Termux doesn't
-#   build its package for one; the app leaves it (and its tools) out there
+#   build its package for one; the app leaves it (and its tools) out there. A part building on one
+#   that isn't built for an ABI isn't either (say so). A tool can run on several parts (the
+#   Minecraft server: jdk and cloudflared), its pages a module of their own in the app
 # - script: run on the part's files once they're exported (rootfs/<script>, with STAGE: its folder)
 # Everything a part's packages use comes along, and only that: the libraries they link, the
 # interpreters their scripts run, the data those come with (rootfs/parts.py linked). Termux's
@@ -141,18 +143,26 @@ packages:
       - yt-dlp
       - requests
 
-  minecraft: # Minecraft server
+  jdk: # Java, for the tools running on it (the Minecraft server)
     requires: [core]
-    # Termux doesn't build OpenJDK 25 for x86 (upstream dropped 32-bit x86): the part (and the tool)
-    # isn't there for it, see rootfs/release.py
+    # Termux doesn't build OpenJDK 25 for x86 (upstream dropped 32-bit x86): the part (and the tools
+    # on it) isn't there for it, see rootfs/release.py
     abis: [arm64-v8a, armeabi-v7a, x86_64]
     packages:
       # Minecraft 26.1 and later need Java 25 (older ones from 1.17 run on it too); its programs are
-      # update-alternatives' links, which aren't exported: minecraft.sh links bin/java
+      # update-alternatives' links, which aren't exported: jdk.sh links bin/java
       - openjdk-25
-      # Cloudflare Tunnel, for players outside the phone's network (with the Modflared mod)
+    exclude:
+      # Sound, which none of the tools on it plays: its PulseAudio plugin pulls in PulseAudio, D-Bus
+      # and the codecs libsndfile links (FLAC, MP3, Opus, Vorbis), which went to the core as FFmpeg
+      # has them too. alsa-lib stays (Java's libjsound links it; it's never loaded headless)
+      - alsa-plugins
+    script: jdk.sh
+
+  cloudflared: # Cloudflare Tunnel, for servers players reach from anywhere (the Minecraft server's)
+    requires: [core]
+    packages:
       - cloudflared
-    script: minecraft.sh
 
 # Only for building: installed when pip has packages, never in a part (left out with what only
 # they need, even as a dependency, as python-yt-dlp's of python-pip)
