@@ -152,6 +152,9 @@ packages:
       # Minecraft 26.1 and later need Java 25 (older ones from 1.17 run on it too); its programs are
       # update-alternatives' links, which aren't exported: jdk.sh links bin/java
       - openjdk-25
+      # What libandroid-spawn (OpenJDK's) links, rebuilt for 16 KB pages (rootfs/rebuild-16k.sh):
+      # Termux's package of it, built before its recipe said so, doesn't depend on it
+      - libc++
     exclude:
       # Sound, which none of the tools on it plays: its PulseAudio plugin pulls in PulseAudio, D-Bus
       # and the codecs libsndfile links (FLAC, MP3, Opus, Vorbis), which went to the core as FFmpeg
