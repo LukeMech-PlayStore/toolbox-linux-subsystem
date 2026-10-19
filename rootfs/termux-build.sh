@@ -85,13 +85,16 @@ source "$recipe/build.sh"
 deps=$(echo "${TERMUX_PKG_BUILD_DEPENDS:-}" | tr ',' '\n' | sed 's/([^)]*)//; s/|.*//; s/ //g' | grep . || true)
 [ -z "$deps" ] || apt-get install -y $deps
 
-urls=("${TERMUX_PKG_SRCURL[@]}") sums=("${TERMUX_PKG_SHA256[@]}")
-[ ${#urls[@]} -eq 1 ] || termux_error_exit "several sources aren't supported"
-curl -fsSL -o "$WORK/$package.src" "${urls[0]}"
-echo "${sums[0]}  $WORK/$package.src" | sha256sum -c -
 rm -rf "$src" "$build"
 mkdir -p "$src" "$build"
-tar -xf "$WORK/$package.src" -C "$src" --strip-components=1
+# Its source, unless it has none (its files are in the recipe, e.g. libandroid-spawn's posix_spawn.cpp)
+if [ "$TERMUX_PKG_SKIP_SRC_EXTRACT" != true ]; then
+  urls=("${TERMUX_PKG_SRCURL[@]}") sums=("${TERMUX_PKG_SHA256[@]}")
+  [ ${#urls[@]} -eq 1 ] || termux_error_exit "several sources aren't supported"
+  curl -fsSL -o "$WORK/$package.src" "${urls[0]}"
+  echo "${sums[0]}  $WORK/$package.src" | sha256sum -c -
+  tar -xf "$WORK/$package.src" -C "$src" --strip-components=1
+fi
 
 # Its patches, as termux_step_patch_package applies them (with its placeholders filled in)
 cd "$src"
@@ -104,7 +107,18 @@ done
 if declare -F termux_step_post_get_source > /dev/null; then termux_step_post_get_source; fi
 if declare -F termux_step_pre_configure > /dev/null; then termux_step_pre_configure; fi
 
-if declare -F termux_step_configure > /dev/null; then
+if ! declare -F termux_step_configure > /dev/null && declare -F termux_step_make > /dev/null; then
+  # Its own build and install steps (e.g. a library of a file or two): installed where Termux's
+  # would, under <dest>
+  if [ "$TERMUX_PKG_BUILD_IN_SRC" = true ]; then cd "$src"; else cd "$build"; fi
+  # (linking with LDFLAGS, for 16 KB pages)
+  termux_step_make
+  if declare -F termux_step_make_install > /dev/null; then
+    TERMUX_PREFIX="$dest$PREFIX" termux_step_make_install
+  else
+    make install DESTDIR="$dest"
+  fi
+elif declare -F termux_step_configure > /dev/null; then
   # Its own configure step, through a configure that leaves out what's dropped
   shim="$WORK/shim-$package"
   mkdir -p "$shim"
