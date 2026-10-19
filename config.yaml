@@ -128,14 +128,15 @@ packages:
   ytdlp: # Media downloader
     requires: [python, ffmpeg]
     packages:
-      - yt-dlp
       # qjs: the JavaScript runtime yt-dlp solves YouTube's player challenges with (the app runs it with
       # --js-runtimes quickjs); the solver's scripts come with yt-dlp itself, so no yt-dlp-ejs (it'd pull in Node.js)
       - quickjs-ng
-    exclude:
-      # Optional to yt-dlp (it has its own AES, and asks for no brotli then)
-      - python-pycryptodomex
-      - python-brotli
+    pip:
+      # PyPI's wheel, not Termux's yt-dlp: Termux builds it from the bare git tag, without the generated
+      # lazy_extractors.py, so every run imported all ~1800 extractors (each file traced by PRoot) before
+      # doing anything. The wheel has them (and the solver's scripts)
+      - yt-dlp
+      - requests
 
 # Only for building: installed when pip has packages, never in a part (left out with what only
 # they need, even as a dependency, as python-yt-dlp's of python-pip)
