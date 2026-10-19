@@ -164,9 +164,10 @@ for p in "${PARTS[@]}"; do
     | sort -u > "$WORK/$p.files"
   tar -C "$PREFIX" --no-recursion -cf - -T "$WORK/$p.files" | tar -C "$STAGE/usr" -xf -
 
-  # What the app lists it holds ("name version"): all of it, its own packages first
+  # What the app lists it holds ("name version"): all of it, its own packages first - those that are
+  # in it: one several parts use went to the one they build on (e.g. jdk's libc++, in the core)
   {
-    packages_of "$p" | xargs -r dpkg-query -W -f='${Package} ${Version}\n'
+    packages_of "$p" | { grep -xF -f "$WORK/$p.apt.own" || true; } | xargs -r dpkg-query -W -f='${Package} ${Version}\n'
     mapfile -t reqs < <(list_of "$p" pip)
     if [ ${#reqs[@]} -gt 0 ]; then python3 "$HERE/pip-files.py" top "${reqs[@]}"; fi
   } > "$COMPONENTS"
