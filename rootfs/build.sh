@@ -76,8 +76,10 @@ read -r -a PIP_OPTIONS <<< "$(for p in "${PARTS[@]}"; do cfg "$(part_of "$p").pi
 # optional library it finds (Pillow linked FFmpeg's libtiff), which its part wouldn't have
 if [ ${#PIP[@]} -gt 0 ]; then
   apt-get install -y "${BUILD_PKGS[@]}" "${PIP_LIBS[@]}"
-  # Termux builds with 16 KB pages in mind, make sure locally built modules are too
-  LDFLAGS="-Wl,-z,max-page-size=16384" pip install --no-cache-dir --no-compile --break-system-packages \
+  # Termux builds with 16 KB pages in mind, make sure locally built modules are too; without debug
+  # info (-S), which named pip's random build folder: the same package built anew came out different
+  # (a new part version every release), and it was most of Pillow's modules
+  LDFLAGS="-Wl,-z,max-page-size=16384 -Wl,-S" pip install --no-cache-dir --no-compile --break-system-packages \
     "${PIP_OPTIONS[@]}" "${PIP[@]}"
 fi
 apt-get install -y "${PKGS[@]}"
