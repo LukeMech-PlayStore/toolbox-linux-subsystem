@@ -4,7 +4,7 @@
       After an ABI's parts are compressed: prints, per part, its size unpacked and as an archive
       and what it holds (components-<part>.txt from build.sh), as JSON.
 
-  release.py merge <tag> <config.json> <current dir> <manifests dir> <previous dir> <out dir>
+  release.py merge <tag> <config.json> <current dir> <manifests dir> <previous dir> <out dir> <proot dir> <proot.json>
       Each part gets a fingerprint: what goes into it (its merged manifest, its config entry and
       script, the settings and build scripts every part shares). A part whose fingerprint the
       previous release has, or whose files came out the same as there for every ABI (e.g. the
@@ -13,11 +13,16 @@
       as their version and this build's archives. Packed differently than there (pack.sh), a part
       with the same files keeps its version (the app has nothing to unpack again) but gets this
       build's archives.
+      PRoot ships with the core (the app's core module), so it's part of the core's fingerprint: a
+      new PRoot or talloc version (or NDK, or build script or patch) is a new core version, with this
+      build's PRoot; a core keeping its version keeps the previous release's PRoot too.
       A part built for some ABIs only (its abis in config.yaml) is in those alone, and in their
       libparts.json.so alone.
       <config.json>: config.yaml as JSON (its abis and packages). <current dir>: <arch>/<lib> and
       sizes-<arch>.json of this build (arch: the abi's termux name). <previous dir>: the previous
       release's parts.json and its archives in <abi>/<lib> (both may be missing: then all is new).
+      <proot dir>: this build's PRoot, <abi>/lib*.so (build-proot.yml). <proot.json>: what it was
+      built of, {"ref", "talloc", "ndk"}.
       Writes <out dir>/<abi>/<lib>, <out dir>/parts.json (the release's, for the next one),
       <out dir>/<abi>/libparts.json.so (the app's: that ABI's alone, without the hashes) and
       <out dir>/changed.txt (the parts with a new version, one per line).
@@ -32,6 +37,8 @@ import tarfile
 HERE = os.path.dirname(os.path.abspath(__file__))
 # What every part is built with (not this script: it only picks what ships)
 SHARED_SCRIPTS = ["build.sh", "parts.py", "pip-files.py", "rebuild-16k.sh", "termux-build.sh"]
+# How PRoot is built (proot/): its scripts and patches
+PROOT_SRC = os.path.join(HERE, "..", "proot")
 
 
 def lib_of(part):
@@ -77,14 +84,33 @@ def read_file(path):
         return f.read()
 
 
-def fingerprint(part, config, manifest):
-    """What decides a part's files: same fingerprint, same archive."""
+def proot_of(info_path):
+    """What PRoot is built of: its and talloc's versions, the NDK, and its build scripts and patches."""
+    with open(info_path, encoding="utf-8") as f:
+        info = json.load(f)
+    h = hashlib.sha256()
+    patches = sorted(p for p in os.listdir(os.path.join(PROOT_SRC, "patches")) if p.endswith(".patch"))
+    for name in ["build.sh", "ndk-setup.sh"] + [f"patches/{p}" for p in patches]:
+        h.update(f"\0{name}\0".encode() + read_file(os.path.join(PROOT_SRC, name)))
+    return {"ref": info["ref"], "talloc": info["talloc"], "ndk": info["ndk"], "build": h.hexdigest()}
+
+
+def proot_libs(proot_dir, abi):
+    """PRoot and its loaders as built for an ABI (libproot.so, libproot-loader*.so)."""
+    return sorted(n for n in os.listdir(os.path.join(proot_dir, abi)) if n.startswith("lib") and n.endswith(".so"))
+
+
+def fingerprint(part, config, manifest, proot=None):
+    """What decides a part's files: same fingerprint, same archive (the core's: and PRoot)."""
     h = hashlib.sha256()
     entry = (config.get("packages") or {}).get(part)
-    # What every part is built with (build_packages; not the ABIs or PRoot, nothing of a part)
+    # What every part is built with (build_packages; not the ABIs, nothing of a part, nor PRoot's
+    # settings: "latest" says nothing, the core gets what PRoot was built of)
     shared = {k: v for k, v in config.items() if k not in ("packages", "abis", "proot")}
     h.update(json.dumps({"part": part, "entry": entry or {}, "shared": shared}, sort_keys=True).encode())
     h.update(b"\0manifest\0" + manifest.encode())
+    if proot:
+        h.update(b"\0proot\0" + json.dumps(proot, sort_keys=True).encode())
     for script in SHARED_SCRIPTS + ([entry["script"]] if entry and entry.get("script") else []):
         h.update(f"\0{script}\0".encode() + read_file(os.path.join(HERE, script)))
     return h.hexdigest()
@@ -121,7 +147,7 @@ def content(archive, part):
     return h.hexdigest()
 
 
-def merge(tag, config_path, current, manifests, previous, out):
+def merge(tag, config_path, current, manifests, previous, out, proot_dir, proot_info):
     with open(config_path, encoding="utf-8") as f:
         full = json.load(f)
     config = full
@@ -144,18 +170,26 @@ def merge(tag, config_path, current, manifests, previous, out):
     index = {}
     changed = []
     packed = packing()
+    proot = proot_of(proot_info)
     for part in parts:
         # The ABIs it's built for (its abis, else all), the build's arch -> ABI
         only = (extensions.get(part) or {}).get("abis")
         part_abis = {arch: abi for arch, abi in abis.items() if not only or abi in only}
         manifest = "\n".join(read_lines(os.path.join(manifests, f"manifest-{part}.txt")))
-        fp = fingerprint(part, config, manifest)
+        # PRoot ships with the core: a new one is a new core
+        own_proot = proot if part == "core" else None
+        fp = fingerprint(part, config, manifest, own_proot)
         lib = lib_of(part)
+        # What ships with it in each ABI's folder (the core: PRoot), kept along with it or not
+        extras = {abi: proot_libs(proot_dir, abi) if own_proot else [] for abi in part_abis.values()}
         prev = prev_index.get(part)
         complete = (
             prev is not None
             and set(prev.get("abis", {})) == set(part_abis.values())
-            and all(os.path.exists(os.path.join(previous, abi, lib)) for abi in part_abis.values())
+            and all(os.path.exists(os.path.join(previous, abi, name))
+                    for abi in part_abis.values() for name in [lib] + extras[abi])
+            # Built with the same PRoot (earlier releases don't say: the core is new)
+            and prev.get("proot") == own_proot
         )
         same_input = complete and prev.get("hash") == fp
         # Earlier releases have no packing: all were packed otherwise
@@ -171,6 +205,10 @@ def merge(tag, config_path, current, manifests, previous, out):
             os.makedirs(os.path.join(out, abi), exist_ok=True)
             source = os.path.join(previous, abi, lib) if reuse else os.path.join(current, arch, lib)
             shutil.copyfile(source, os.path.join(out, abi, lib))
+            # Its version kept, so is PRoot (built of the same, but maybe not byte for byte)
+            for name in extras[abi]:
+                source = os.path.join(previous if reuse or repacked else proot_dir, abi, name)
+                shutil.copyfile(source, os.path.join(out, abi, name))
         if repacked:
             # Its version stays (the same files), its sizes are this build's archives'
             entry = {
@@ -197,6 +235,13 @@ def merge(tag, config_path, current, manifests, previous, out):
             changed.append(part)
             print(f"{part}: {prev['version'] if prev else 'new'} -> {tag}")
         entry["packing"] = packed
+        if own_proot:
+            entry["proot"] = own_proot
+            # Listed with what the core holds
+            for abi in part_abis.values():
+                listed = [c for c in entry["abis"][abi]["components"] if not c.startswith(("proot ", "talloc "))]
+                entry["abis"][abi]["components"] = listed + [
+                    f"proot {own_proot['ref'].removeprefix('v')}", f"talloc {own_proot['talloc']}"]
         # What it builds on is the config's, always (it's no archive's)
         entry["requires"] = [] if part == "core" else (extensions[part] or {}).get("requires") or []
         entry["lib"] = lib

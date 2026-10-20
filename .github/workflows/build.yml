@@ -230,38 +230,43 @@ jobs:
             } | sort > "manifests/manifest-$part.txt"
           done
 
-      - name: Pick Parts
-        run: |
-          # A part keeps the previous release's archive and version unless what goes into it
-          # changed (rootfs/release.py); final_package gets every ABI's archives and its own parts list
-          # (libparts.json.so, the app's); parts.json, of them all, is a release asset of its own (for the next one)
-          yq -o=json '.' config.yaml > config.json
-          python3 rootfs/release.py merge "${{ needs.prepare.outputs.version }}" config.json \
-            current_assets manifests prev_package final_package
-          mv final_package/changed.txt changed.txt
-          mv final_package/parts.json parts.json
-
       - name: Download PRoot
         uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
         with:
           name: proot
           path: proot_out
 
-      - name: Add PRoot
+      - name: Pick Parts
+        env:
+          PROOT_REF: ${{ needs.proot.outputs.proot_ref }}
+          TALLOC_VERSION: ${{ needs.proot.outputs.talloc_version }}
+          NDK_VERSION: ${{ needs.proot.outputs.ndk_version }}
+        run: |
+          # A part keeps the previous release's archive and version unless what goes into it
+          # changed (rootfs/release.py); final_package gets every ABI's archives and its own parts list
+          # (libparts.json.so, the app's); parts.json, of them all, is a release asset of its own (for the next one).
+          # PRoot ships with the core: a new PRoot or talloc version (or NDK, or proot/ script or
+          # patch) is a new core, with this build's PRoot; else the core keeps the previous one's
+          yq -o=json '.' config.yaml > config.json
+          jq -n --arg ref "$PROOT_REF" --arg talloc "$TALLOC_VERSION" --arg ndk "$NDK_VERSION" \
+            '{ref: $ref, talloc: $talloc, ndk: $ndk}' > proot.json
+          python3 rootfs/release.py merge "${{ needs.prepare.outputs.version }}" config.json \
+            current_assets manifests prev_package final_package proot_out proot.json
+          mv final_package/changed.txt changed.txt
+          mv final_package/parts.json parts.json
+
+      - name: Read PRoot
         id: proot
         run: |
-          # Each ABI's jniLibs folder gets PRoot and its loaders, as built now: the app takes them from
-          # here, with the core (its module). Changed from the previous release's: a release is needed
-          changed=false
-          for dir in proot_out/*/; do
-            abi=$(basename "$dir")
-            for lib in "$dir"lib*.so; do
-              prev="prev_package/$abi/$(basename "$lib")"
-              if [ ! -f "$prev" ] || ! cmp -s "$lib" "$prev"; then changed=true; fi
-              cp "$lib" "final_package/$abi/"
-            done
-          done
-          echo "changed=$changed" >> $GITHUB_OUTPUT
+          # The PRoot shipped (Pick Parts put it in each ABI's jniLibs folder with the core): this
+          # build's with a new core, else the previous release's
+          jq -r '.parts.core.proot | "ref=\(.ref)", "talloc=\(.talloc)", "ndk=\(.ndk)"' parts.json >> $GITHUB_OUTPUT
+          if grep -qx core changed.txt && \
+            [ "$(jq -c '.parts.core.proot' parts.json)" != "$(jq -c '.parts.core.proot' prev_package/parts.json 2>/dev/null)" ]; then
+            echo "changed=true" >> $GITHUB_OUTPUT
+          else
+            echo "changed=false" >> $GITHUB_OUTPUT
+          fi
 
       - name: Generate Changelog
         id: changelog
@@ -322,7 +327,7 @@ jobs:
           done
 
           # A release is needed when a part got a new version (its packages, its config or the
-          # build scripts changed); the others ship as they were
+          # build scripts changed; the core's: or PRoot); the others ship as they were
           if [ -s changed.txt ]; then CHANGES_DETECTED="true"; else CHANGES_DETECTED="false"; fi
           VERSIONS="| Part | Version | |"$'\n'"|:-----|:--------|:--:|"$'\n'
           for part in $(jq -r '.parts | keys_unsorted[]' parts.json); do
@@ -340,10 +345,6 @@ jobs:
           fi
           FINAL_LOG="## 🧩 Parts"$'\n\n'"$VERSIONS"$'\n'"$FINAL_LOG"
 
-          # Or PRoot did
-          if [ "${{ steps.proot.outputs.changed }}" == "true" ]; then
-            CHANGES_DETECTED="true"
-          fi
           # A push changes what's built or how it's released (e.g. what the app gets of it): always a release
           if [ "${{ inputs.force_release }}" == "true" ] || [ "${{ github.event_name }}" == "push" ]; then
             CHANGES_DETECTED="true"
@@ -369,7 +370,7 @@ jobs:
           body: |
               ## Automated Build ${{ needs.prepare.outputs.version }}
               Base: [Termux packages](https://github.com/termux/termux-packages)
-              PRoot: [`termux/proot@${{ needs.proot.outputs.proot_ref }}`](https://github.com/termux/proot/tree/${{ needs.proot.outputs.proot_ref }}), talloc `${{ needs.proot.outputs.talloc_version }}` (statically linked), with its loaders; NDK ${{ needs.proot.outputs.ndk_version }}${{ steps.proot.outputs.changed == 'true' && ' 🆕' || '' }}
+              PRoot (with the core): [`termux/proot@${{ steps.proot.outputs.ref }}`](https://github.com/termux/proot/tree/${{ steps.proot.outputs.ref }}), talloc `${{ steps.proot.outputs.talloc }}` (statically linked), with its loaders; NDK ${{ steps.proot.outputs.ndk }}${{ steps.proot.outputs.changed == 'true' && ' 🆕' || '' }}
               ABIs: ${{ join(fromJSON(needs.prepare.outputs.matrix).*.abi, ', ') }}
               
               ${{ steps.changelog.outputs.full_log }}
