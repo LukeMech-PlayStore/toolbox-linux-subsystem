@@ -237,11 +237,12 @@ def merge(tag, config_path, current, manifests, previous, out, proot_dir, proot_
         entry["packing"] = packed
         if own_proot:
             entry["proot"] = own_proot
-            # Listed with what the core holds
+            # First of what the core holds, one entry: talloc is linked into it, no package of its own
+            # (earlier releases listed it apart, after the rest)
             for abi in part_abis.values():
                 listed = [c for c in entry["abis"][abi]["components"] if not c.startswith(("proot ", "talloc "))]
-                entry["abis"][abi]["components"] = listed + [
-                    f"proot {own_proot['ref'].removeprefix('v')}", f"talloc {own_proot['talloc']}"]
+                entry["abis"][abi]["components"] = [
+                    f"proot {own_proot['ref'].removeprefix('v')}_talloc-{own_proot['talloc']}"] + listed
         # What it builds on is the config's, always (it's no archive's)
         entry["requires"] = [] if part == "core" else (extensions[part] or {}).get("requires") or []
         entry["lib"] = lib
