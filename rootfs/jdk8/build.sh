@@ -53,12 +53,14 @@ mkdir -p "$WORK"
 cd "$WORK"
 
 # The NDK: r10e, the last with GCC (HotSpot 8 doesn't build with clang), a standalone toolchain of it
-NDK="$WORK/../android-ndk-$NDK_VERSION"
+NDK="$(dirname "$WORK")/android-ndk-$NDK_VERSION"
 if [ ! -d "$NDK" ]; then
-    wget -nv -O "$WORK/../ndk.zip" "https://dl.google.com/android/repository/android-ndk-$NDK_VERSION-linux-x86_64.zip"
-    unzip -q "$WORK/../ndk.zip" -d "$WORK/.."
-    rm "$WORK/../ndk.zip"
+    wget -nv -O "$NDK.zip" "https://dl.google.com/android/repository/android-ndk-$NDK_VERSION-linux-x86_64.zip"
+    unzip -q "$NDK.zip" -d "$(dirname "$NDK")"
+    rm "$NDK.zip"
 fi
+# Its scripts find it by this
+export ANDROID_NDK_ROOT=$NDK
 TOOLCHAIN="$WORK/toolchain"
 if [ ! -d "$TOOLCHAIN" ]; then
     "$NDK/build/tools/make-standalone-toolchain.sh" --arch="$SHORT" --platform="android-$API" --install-dir="$TOOLCHAIN"
