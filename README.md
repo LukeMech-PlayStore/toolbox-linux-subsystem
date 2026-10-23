@@ -27,7 +27,7 @@ Patches in `proot/patches/`:
 - `proot-ashmem-include-string.patch` - missing `<string.h>` include (same as Termux)
 - `proot-loader-16k-pages.patch` - loaders are linked for 16 KB pages too (they don't get `LDFLAGS`; the NDK only defaults to it for 64-bit ABIs)
 
-`ref` and `talloc` in `config.yaml`'s `proot` section are `latest`: each build takes PRoot's newest tag and talloc's newest release (a fixed ref or version pins it; `NDK_VERSION` is in `build-proot.yml`). A patch that no longer applies fails the build.
+`ref` and `talloc` in `config.yaml`'s `proot` section are `latest`: each build takes PRoot's newest tag and talloc's newest release (a fixed ref or version pins it); its `ndk` is the NDK it's built with. A patch that no longer applies fails the build.
 
 ## OpenJDK 8
 
@@ -36,7 +36,7 @@ Termux has no Java older than 17, and Minecraft up to 1.16.5 runs on Java 8, so 
 By hand, on Linux x86_64 (an hour or so per ABI), into `rootfs/jdk8/out/<abi>/`:
 
 ```sh
-sudo apt install autoconf unzip zip patchelf yq jq systemtap-sdt-dev gcc-multilib g++-multilib   libxtst-dev libxrender-dev libxt-dev libxrandr-dev libasound2-dev libelf-dev libfontconfig1-dev libx11-dev
+sudo apt install autoconf unzip zip patchelf yq jq systemtap-sdt-dev gcc-multilib g++-multilib   libxtst-dev libxrender-dev libxt-dev libxrandr-dev libasound2-dev libcups2-dev libelf-dev libfontconfig1-dev libx11-dev
 BOOT_JDK=/path/to/jdk8 bash rootfs/jdk8/build.sh arm64-v8a
 ```
 

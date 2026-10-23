@@ -20,6 +20,7 @@ proot:
   repo: termux/proot
   ref: latest
   talloc: latest # Statically linked; latest: its newest release on samba.org
+  ndk: r30 # Cross-compiled with it (clang)
   android_api: 29 # Android 10
 
 # OpenJDK 8 (the jdk8 part: Minecraft up to 1.16.5): Termux has no Java older than 17, so its JRE is built
@@ -38,7 +39,6 @@ jdk8:
   ndk: r10e
   android_api: 21
   freetype: 2.15.0 # AWT's fonts, which the JRE links
-  cups: 2.4.20 # OpenPrinting's; its headers only: the JRE compiles printing against them
 
 # The rootfs, as a tree of parts shipped in the app's jniLibs (lib*.so, so Android unpacks them with
 # it), each installed from Play (with the pages of the tools on it) and unpacked when a tool first

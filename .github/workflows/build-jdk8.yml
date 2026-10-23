@@ -76,7 +76,7 @@ jobs:
         run: |
           sudo apt-get update
           sudo apt-get -y install autoconf unzip zip patchelf systemtap-sdt-dev gcc-multilib g++-multilib \
-            libxtst-dev libxrender-dev libxt-dev libxrandr-dev libasound2-dev libelf-dev libfontconfig1-dev libx11-dev
+            libxtst-dev libxrender-dev libxt-dev libxrandr-dev libasound2-dev libcups2-dev libelf-dev libfontconfig1-dev libx11-dev
 
       - name: Build
         if: steps.cache.outputs.cache-hit != 'true'

@@ -28,7 +28,6 @@ cfg() {
 NDK_VERSION=$(cfg ndk)
 API=$(cfg android_api)
 FREETYPE_VERSION=$(cfg freetype)
-CUPS_VERSION=$(cfg cups)
 
 # Each ABI as the NDK, OpenJDK's build and its lib/ folder name it. 32-bit ones get HotSpot's client VM
 # (as PojavLauncher's), ARM's from the AArch32 port (its own repository and tags)
@@ -77,7 +76,7 @@ export LD=$TOOLCHAIN/bin/$TARGET-ld OBJCOPY=$TOOLCHAIN/bin/$TARGET-objcopy RANLI
 export CPPFLAGS="-I$INCLUDE -I$INCLUDE/$TARGET"
 export LDFLAGS="-L$NDK/platforms/android-$API/arch-$SHORT/usr/lib"
 
-# FreeType (AWT's fonts, which the JRE links) and CUPS' headers (printing, which it only compiles against)
+# FreeType (AWT's fonts), which the JRE links: built for Android, as it is
 FREETYPE="$WORK/freetype-$FREETYPE_VERSION/build_android"
 if [ ! -d "$FREETYPE" ]; then
     wget -nv -O- "https://downloads.sourceforge.net/project/freetype/freetype2/$FREETYPE_VERSION/freetype-$FREETYPE_VERSION.tar.gz" | tar -xz
@@ -86,8 +85,6 @@ if [ ! -d "$FREETYPE" ]; then
             --without-zlib --with-bzip2=no --with-brotli=no --with-png=no --with-harfbuzz=no \
         && CFLAGS=-fno-rtti CXXFLAGS=-fno-rtti make -j"$JOBS" && make install)
 fi
-CUPS="$WORK/cups-$CUPS_VERSION"
-[ -d "$CUPS" ] || wget -nv -O- "https://github.com/OpenPrinting/cups/releases/download/v$CUPS_VERSION/cups-$CUPS_VERSION-source.tar.gz" | tar -xz
 
 # The source at its tag, and the patches for it
 rm -rf openjdk
@@ -108,11 +105,12 @@ for p in jdk8-gcc49-aarch64.patch jdk8-bitmap-arrayallocator.patch; do
 done
 
 # What the build expects of a Linux system: X11's, Fontconfig's and ALSA's headers (the host's: configure
-# looks for them; the patches leave out what would use ALSA), CUPS' and libraries bionic has in libc (empty ones)
+# looks for them; the patches leave out what would use ALSA), CUPS' (printing, which the JRE only compiles
+# against), and libraries bionic has in libc (empty ones)
 ln -sfn /usr/include/X11 "$INCLUDE/X11"
 ln -sfn /usr/include/fontconfig "$INCLUDE/fontconfig"
 ln -sfn /usr/include/alsa "$INCLUDE/alsa"
-ln -sfn "$CUPS/cups" "$INCLUDE/cups"
+ln -sfn /usr/include/cups "$INCLUDE/cups"
 mkdir -p dummy_libs
 for lib in pthread thread_db; do [ -f "dummy_libs/lib$lib.a" ] || ar cru "dummy_libs/lib$lib.a"; done
 
@@ -132,7 +130,7 @@ bash ./configure \
     --enable-option-checking=fatal \
     --with-jdk-variant=normal \
     --with-jvm-variants="$VM" \
-    --with-cups-include="$CUPS" \
+    --with-cups-include="$INCLUDE" \
     --with-devkit="$TOOLCHAIN" \
     --with-debug-level=release \
     --disable-precompiled-headers \
