@@ -48,14 +48,14 @@ cd "$WORK"
 # The source at its tag, and the patches for it
 rm -rf openjdk
 git clone -q --depth 1 -b "$SRC_REF" "https://github.com/$REPO" openjdk
-pojav() {
-    # PojavLauncher's for Android (jdk8-android*.patch: its buildjre8's jdk8u_android*.diff), as it applies
-    # them: what no longer fits upstream (a newer update) is left out, and said
+apply_patch() {
+    # As PojavLauncher applies its own (jdk8-android*.patch: its buildjre8's jdk8u_android*.diff): what no
+    # longer fits upstream (a newer update) is left out, and said
     git -C openjdk apply --reject --whitespace=fix "$HERE/patches/$1" || echo "::warning::$1: some hunks didn't apply"
 }
-pojav jdk8-android.patch
-if [ "$ABI" = armeabi-v7a ]; then pojav jdk8-android-aarch32.patch; else pojav jdk8-android-main.patch; fi
-if [ "$ABI" = x86 ]; then pojav jdk8-android-x86-page-trap.patch; fi
+apply_patch jdk8-android.patch
+if [ "$ABI" = armeabi-v7a ]; then apply_patch jdk8-android-aarch32.patch; else apply_patch jdk8-android-main.patch; fi
+if [ "$ABI" = x86 ]; then apply_patch jdk8-android-x86-page-trap.patch; fi
 # What the update pinned needs that they don't know: BitMap's ArrayAllocator instantiated where libjvm needs it
 patch -d openjdk -p1 --forward --fuzz=2 < "$HERE/patches/jdk8-bitmap-arrayallocator.patch"
 
@@ -71,10 +71,13 @@ for lib in pthread thread_db; do [ -f "dummy_libs/lib$lib.a" ] || "$AR" cru "dum
 
 # OpenJDK 8's C and C++ as clang takes them now: its C has what C99 and newer clangs make errors of
 # (functions used undeclared, ints for pointers), tentative definitions in headers (-fcommon), and its
-# C++ is C++98's (register, dynamic exception specifications)
+# C++ is C++98's (register, dynamic exception specifications). HotSpot tests this against NULL, which clang
+# may otherwise drop as never true (as OpenJDK tells GCC). Its exported symbols' list names some it no
+# longer has, which LLVM's linker refuses where GNU's didn't mind
 C_OLD="-fcommon -Wno-error=implicit-function-declaration -Wno-error=implicit-int -Wno-error=int-conversion
  -Wno-error=incompatible-pointer-types -Wno-error=incompatible-function-pointer-types -Wno-error=return-type"
-FLAGS="-DLE_STANDALONE -O3 -D__ANDROID__ $(echo $C_OLD)"
+FLAGS="-DLE_STANDALONE -O3 -D__ANDROID__ -fno-delete-null-pointer-checks $(echo $C_OLD)"
+LDFLAGS_OLD="-Wl,--undefined-version"
 
 boot=()
 BOOT_JDK="${BOOT_JDK:-${JAVA_HOME:-}}"
@@ -88,7 +91,7 @@ bash ./configure BUILD_CC=clang BUILD_CXX=clang++ \
     --with-toolchain-type=clang \
     --with-extra-cflags="$FLAGS" \
     --with-extra-cxxflags="$FLAGS -std=gnu++98" \
-    --with-extra-ldflags="-L$WORK/dummy_libs" \
+    --with-extra-ldflags="-L$WORK/dummy_libs $LDFLAGS_OLD" \
     --enable-option-checking=fatal \
     --with-jdk-variant=normal \
     --with-jvm-variants="$VM" \
