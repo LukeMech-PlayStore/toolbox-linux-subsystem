@@ -34,10 +34,8 @@ jdk8:
   # OpenJDK's, so ref follows it: every ABI on one version
   repo_arm: openjdk/aarch32-port-jdk8u
   ref_arm: jdk8u512-b07-aarch32-20261009
-  # The last NDK with GCC (HotSpot 8 doesn't build with clang); its newest platform is Android 5 (21),
-  # which the JRE needs no more than (it runs on every Android the app does)
-  ndk: r10e
-  android_api: 21
+  ndk: r30 # Cross-compiled with its clang, as PRoot
+  android_api: 29 # Android 10
   freetype: 2.15.0 # AWT's fonts, which the JRE links
 
 # The rootfs, as a tree of parts shipped in the app's jniLibs (lib*.so, so Android unpacks them with

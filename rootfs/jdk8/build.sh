@@ -1,12 +1,12 @@
 #!/bin/bash
 # OpenJDK 8's JRE for one ABI (the jdk8 part): Termux has no Java older than 17, so it's built here
 # from OpenJDK's source with patches/ (PojavLauncher's for Android, and what the update pinned needs),
-# cross-compiled with the NDK's GCC
-# (config.yaml's jdk8 section). Into out/<abi>/: the part's files (usr/, as the rootfs's) and what it
-# was built of (info.json). Runs on Linux x86_64 (build-jdk8.yml; by hand too, see README.md).
+# cross-compiled with the NDK's clang (config.yaml's jdk8 section). Into out/<abi>/: the part's files
+# (usr/, as the rootfs's) and what it was built of (info-<abi>.json). Runs on Linux x86_64 (build-jdk8.yml;
+# by hand too, see README.md).
 #
 # usage: build.sh <abi>   (arm64-v8a, armeabi-v7a, x86, x86_64)
-# BOOT_JDK: a JDK 8 to build with (JAVA_HOME's, else the one on PATH)
+# ANDROID_NDK_HOME: the NDK (else downloaded); BOOT_JDK: a JDK 8 to build with (JAVA_HOME's, else PATH's)
 set -euo pipefail
 
 ABI="${1:?usage: build.sh <abi>}"
@@ -29,18 +29,15 @@ NDK_VERSION=$(cfg ndk)
 API=$(cfg android_api)
 FREETYPE_VERSION=$(cfg freetype)
 
-# Each ABI as the NDK, OpenJDK's build and its lib/ folder name it. 32-bit ones get HotSpot's client VM
-# (as PojavLauncher's), ARM's from the AArch32 port (its own repository and tags)
+# Each ABI as clang, OpenJDK's build and its lib/ folder name it. 32-bit ones get HotSpot's client VM
+# (as PojavLauncher's), ARM's from the AArch32 port (its own repository and tags, its own triple)
 case "$ABI" in
-    arm64-v8a)   TARGET=aarch64-linux-android;   SHORT=arm64;  JDK_CPU=aarch64; LIB_ARCH=aarch64; VM=server; REPO=$(cfg repo) ;;
-    armeabi-v7a) TARGET=arm-linux-androideabi;   SHORT=arm;    JDK_CPU=aarch32; LIB_ARCH=aarch32; VM=client; REPO=$(cfg repo_arm) ;;
-    x86)         TARGET=i686-linux-android;      SHORT=x86;    JDK_CPU=x86;     LIB_ARCH=i386;    VM=client; REPO=$(cfg repo) ;;
-    x86_64)      TARGET=x86_64-linux-android;    SHORT=x86_64; JDK_CPU=x86_64;  LIB_ARCH=amd64;   VM=server; REPO=$(cfg repo) ;;
+    arm64-v8a)   CLANG=aarch64-linux-android;     TARGET=aarch64-linux-android;     JDK_CPU=aarch64; LIB_ARCH=aarch64; VM=server; REPO=$(cfg repo) ;;
+    armeabi-v7a) CLANG=armv7a-linux-androideabi;  TARGET=aarch32-linux-androideabi; JDK_CPU=aarch32; LIB_ARCH=aarch32; VM=client; REPO=$(cfg repo_arm) ;;
+    x86)         CLANG=i686-linux-android;        TARGET=i686-linux-android;        JDK_CPU=x86;     LIB_ARCH=i386;    VM=client; REPO=$(cfg repo) ;;
+    x86_64)      CLANG=x86_64-linux-android;      TARGET=x86_64-linux-android;      JDK_CPU=x86_64;  LIB_ARCH=amd64;   VM=server; REPO=$(cfg repo) ;;
     *) echo "Error: unknown ABI $ABI" >&2; exit 1 ;;
 esac
-# OpenJDK's configure takes the AArch32 port's own triple
-TARGET_PHYS=$TARGET
-[ "$ABI" = armeabi-v7a ] && TARGET_PHYS=aarch32-linux-androideabi
 
 # Their tags (the AArch32 port's own: its copies of OpenJDK's have none of its code), which patches/ fits
 SRC_REF=$(cfg ref)
@@ -50,40 +47,28 @@ echo "OpenJDK $REPO@$SRC_REF for $ABI ($TARGET, $VM VM), NDK $NDK_VERSION (andro
 mkdir -p "$WORK"
 cd "$WORK"
 
-# The NDK: r10e, the last with GCC (HotSpot 8 doesn't build with clang), a standalone toolchain of it
-# ANDROID_NDK_HOME's (build-jdk8.yml: setup-ndk's, as build-proot.yml's), else downloaded next to the work
+# The NDK: ANDROID_NDK_HOME's (build-jdk8.yml: setup-ndk's, as build-proot.yml's), else downloaded next to the work
 NDK="${ANDROID_NDK_HOME:-$(dirname "$WORK")/android-ndk-$NDK_VERSION}"
 if [ ! -d "$NDK" ]; then
     wget -nv -O "$NDK.zip" "https://dl.google.com/android/repository/android-ndk-$NDK_VERSION-linux-x86_64.zip"
     unzip -q "$NDK.zip" -d "$(dirname "$NDK")"
     rm "$NDK.zip"
 fi
-# Its scripts find it by this
-export ANDROID_NDK_ROOT=$NDK
-TOOLCHAIN="$WORK/toolchain"
-if [ ! -d "$TOOLCHAIN" ]; then
-    "$NDK/build/tools/make-standalone-toolchain.sh" --arch="$SHORT" --platform="android-$API" --install-dir="$TOOLCHAIN"
-    # How OpenJDK's configure finds it (--with-devkit)
-    cat > "$TOOLCHAIN/devkit.info" <<EOF
-DEVKIT_NAME="Android $SHORT"
-DEVKIT_TOOLCHAIN_PATH="\$DEVKIT_ROOT/$TARGET/bin"
-DEVKIT_SYSROOT="\$DEVKIT_ROOT/sysroot"
-EOF
-fi
-INCLUDE="$TOOLCHAIN/sysroot/usr/include"
-export AR=$TOOLCHAIN/bin/$TARGET-ar AS=$TOOLCHAIN/bin/$TARGET-as CC=$TOOLCHAIN/bin/$TARGET-gcc CXX=$TOOLCHAIN/bin/$TARGET-g++
-export LD=$TOOLCHAIN/bin/$TARGET-ld OBJCOPY=$TOOLCHAIN/bin/$TARGET-objcopy RANLIB=$TOOLCHAIN/bin/$TARGET-ranlib STRIP=$TOOLCHAIN/bin/$TARGET-strip
-# Its compilers have the sysroot built in: no -I or -L of it, which the build would also give the tools it
-# compiles for this machine (bionic's headers in place of glibc's)
+# Its clang for the ABI and API (the sysroot built in: no -I or -L of it, which the build would also give
+# the tools it compiles for this machine, bionic's headers in place of glibc's), and LLVM's binutils
+TOOLS="$NDK/toolchains/llvm/prebuilt/linux-x86_64"
+INCLUDE="$TOOLS/sysroot/usr/include"
+export CC="$TOOLS/bin/$CLANG$API-clang" CXX="$TOOLS/bin/$CLANG$API-clang++"
+export AR="$TOOLS/bin/llvm-ar" NM="$TOOLS/bin/llvm-nm" OBJCOPY="$TOOLS/bin/llvm-objcopy" RANLIB="$TOOLS/bin/llvm-ranlib" STRIP="$TOOLS/bin/llvm-strip"
 
 # FreeType (AWT's fonts), which the JRE links: built for Android, as it is
 FREETYPE="$WORK/freetype-$FREETYPE_VERSION/build_android"
 if [ ! -d "$FREETYPE" ]; then
     wget -nv -O- "https://downloads.sourceforge.net/project/freetype/freetype2/$FREETYPE_VERSION/freetype-$FREETYPE_VERSION.tar.gz" | tar -xz
     (cd "freetype-$FREETYPE_VERSION" \
-        && PATH="$TOOLCHAIN/bin:$PATH" ./configure --host="$TARGET" --prefix="$FREETYPE" \
+        && ./configure --host="$CLANG" --prefix="$FREETYPE" \
             --without-zlib --with-bzip2=no --with-brotli=no --with-png=no --with-harfbuzz=no \
-        && CFLAGS=-fno-rtti CXXFLAGS=-fno-rtti make -j"$JOBS" && make install)
+        && make -j"$JOBS" && make install)
 fi
 
 # The source at its tag, and the patches for it
@@ -97,12 +82,8 @@ pojav() {
 pojav jdk8-android.patch
 if [ "$ABI" = armeabi-v7a ]; then pojav jdk8-android-aarch32.patch; else pojav jdk8-android-main.patch; fi
 if [ "$ABI" = x86 ]; then pojav jdk8-android-x86-page-trap.patch; fi
-# What the update pinned needs that they don't know (as termux-java8 builds it): configure refuses GCC < 5
-# for AArch64 (JDK-8360869; the NDK's is 4.9), BitMap's ArrayAllocator isn't instantiated where libjvm
-# needs it. Each has to fit (the AArch32 port's configure is OpenJDK's, further down)
-for p in jdk8-gcc49-aarch64.patch jdk8-bitmap-arrayallocator.patch; do
-    patch -d openjdk -p1 --forward --fuzz=2 < "$HERE/patches/$p"
-done
+# What the update pinned needs that they don't know: BitMap's ArrayAllocator instantiated where libjvm needs it
+patch -d openjdk -p1 --forward --fuzz=2 < "$HERE/patches/jdk8-bitmap-arrayallocator.patch"
 
 # What the build expects of a Linux system: X11's, Fontconfig's and ALSA's headers (the host's: configure
 # looks for them; the patches leave out what would use ALSA), CUPS' (printing, which the JRE only compiles
@@ -112,22 +93,29 @@ ln -sfn /usr/include/fontconfig "$INCLUDE/fontconfig"
 ln -sfn /usr/include/alsa "$INCLUDE/alsa"
 ln -sfn /usr/include/cups "$INCLUDE/cups"
 mkdir -p dummy_libs
-for lib in pthread thread_db; do [ -f "dummy_libs/lib$lib.a" ] || ar cru "dummy_libs/lib$lib.a"; done
+for lib in pthread thread_db; do [ -f "dummy_libs/lib$lib.a" ] || "$AR" cru "dummy_libs/lib$lib.a"; done
+
+# OpenJDK 8's C and C++ as clang takes them now: its C has what C99 and newer clangs make errors of
+# (functions used undeclared, ints for pointers), tentative definitions in headers (-fcommon), and its
+# C++ is C++98's (register, dynamic exception specifications)
+C_OLD="-fcommon -Wno-error=implicit-function-declaration -Wno-error=implicit-int -Wno-error=int-conversion
+ -Wno-error=incompatible-pointer-types -Wno-error=incompatible-function-pointer-types -Wno-error=return-type"
+FLAGS="-DLE_STANDALONE -O3 -D__ANDROID__ $(echo $C_OLD)"
 
 boot=()
 BOOT_JDK="${BOOT_JDK:-${JAVA_HOME:-}}"
 [ -n "$BOOT_JDK" ] && boot=(--with-boot-jdk="$BOOT_JDK")
 cd openjdk
 bash ./configure \
-    --openjdk-target="$TARGET_PHYS" \
-    --with-extra-cflags="-DLE_STANDALONE -O3 -D__ANDROID__" \
-    --with-extra-cxxflags="-DLE_STANDALONE -O3 -D__ANDROID__" \
+    --openjdk-target="$TARGET" \
+    --with-toolchain-type=clang \
+    --with-extra-cflags="$FLAGS" \
+    --with-extra-cxxflags="$FLAGS -std=gnu++98" \
     --with-extra-ldflags="-L$WORK/dummy_libs" \
     --enable-option-checking=fatal \
     --with-jdk-variant=normal \
     --with-jvm-variants="$VM" \
     --with-cups-include="$INCLUDE" \
-    --with-devkit="$TOOLCHAIN" \
     --with-debug-level=release \
     --disable-precompiled-headers \
     --with-fontconfig-include="$INCLUDE" \
@@ -141,8 +129,11 @@ bash ./configure \
 BUILD="build/linux-$JDK_CPU-normal-$VM-release"
 [ -f "$BUILD/spec.gmk" ] || { echo "Error: configure failed" >&2; exit 1; }
 cd "$BUILD"
-# Parallel makes sometimes trip over their own order: once more, as PojavLauncher does
-make JOBS="$JOBS" images || make JOBS="$JOBS" images
+# HotSpot takes clang from make (configure doesn't tell it), its warnings not as errors: a newer clang
+# warns of more than it was written for. Parallel makes sometimes trip over their own order: once
+# more, as PojavLauncher does
+MAKE_ARGS=(JOBS="$JOBS" USE_CLANG=true WARNINGS_ARE_ERRORS= images)
+make "${MAKE_ARGS[@]}" || make "${MAKE_ARGS[@]}"
 
 # The part: the JRE in Termux's prefix (usr/lib/jvm/java-8-openjdk, as Termux's Java), without its
 # debug info, man pages, or what only desktops use
@@ -160,10 +151,10 @@ find "$JRE" -type f \( -name '*.so' -o -path '*/bin/*' \) -exec sh -c 'head -c4 
 # Android 11+ tags heap pointers (their top byte) on 64-bit ARM, which HotSpot 8's code generator can't
 # encode: bin/java loads libtagfix first, which turns that off. HotSpot's monotonic clock comes from
 # librt, which bionic doesn't have: one linking libc stands in (dlsym searches what it links)
-$CC -shared -fPIC -O2 -Wl,-z,max-page-size=16384 -Wl,-soname,libtagfix.so -o "$LIB/libtagfix.so" "$HERE/libtagfix.c"
+"$CC" -shared -fPIC -O2 -Wl,-soname,libtagfix.so -o "$LIB/libtagfix.so" "$HERE/libtagfix.c"
 echo > "$WORK/empty.c"
-$CC -shared -fPIC -Wl,-z,max-page-size=16384 -Wl,-soname,librt.so -Wl,--no-as-needed -o "$LIB/librt.so" "$WORK/empty.c" -lc
-$STRIP --strip-unneeded "$LIB/libtagfix.so" "$LIB/librt.so"
+"$CC" -shared -fPIC -Wl,-soname,librt.so -Wl,--no-as-needed -o "$LIB/librt.so" "$WORK/empty.c" -lc
+"$STRIP" --strip-unneeded "$LIB/libtagfix.so" "$LIB/librt.so"
 patchelf --add-needed libtagfix.so "$JRE/bin/java"
 
 # The app runs it as java-8 (as jdk.sh links the other versions'): its libraries found where it is

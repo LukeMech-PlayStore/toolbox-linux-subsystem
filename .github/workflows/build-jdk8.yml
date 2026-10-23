@@ -7,7 +7,7 @@ on:
   workflow_call:
   workflow_dispatch:
   push: # TEMPORARY: building it on its branch, before it goes to main
-    branches: [jdk8]
+    branches: [jdk8, jdk8-clang]
 
 permissions:
   contents: read
@@ -31,7 +31,7 @@ jobs:
   build:
     name: Build ${{ matrix.abi }}
     needs: prepare
-    # Its NDK's GCC runs on x86_64 Linux alone
+    # The NDK runs on x86_64 Linux
     runs-on: ubuntu-latest
     strategy:
       fail-fast: false
