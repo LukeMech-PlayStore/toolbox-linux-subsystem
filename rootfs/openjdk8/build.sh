@@ -110,9 +110,11 @@ BUILD="build/linux-$JDK_CPU-normal-$VM-release"
 [ -f "$BUILD/spec.gmk" ] || { echo "Error: configure failed" >&2; exit 1; }
 cd "$BUILD"
 # HotSpot takes clang from make (configure doesn't tell it), its warnings not as errors: a newer clang
-# warns of more than it was written for. Parallel makes sometimes trip over their own order: once
-# more, as PojavLauncher does
-MAKE_ARGS=(JOBS="$JOBS" USE_CLANG=true WARNINGS_ARE_ERRORS= images)
+# warns of more than it was written for. No serviceability agent (libsaproc: a debugger's way into a
+# running JVM, no part of running programs; on API 29 its Android headers clash with bionic's), neither
+# built nor exported. Parallel makes sometimes trip over their own order: once more, as PojavLauncher does
+MAKE_ARGS=(JOBS="$JOBS" USE_CLANG=true WARNINGS_ARE_ERRORS=
+    BUILDLIBSAPROC= ADD_SA_BINARIES/x86= ADD_SA_BINARIES/aarch64= images)
 make "${MAKE_ARGS[@]}" || make "${MAKE_ARGS[@]}"
 
 # The part: the JRE in Termux's prefix (usr/lib/jvm/java-8-openjdk, as Termux's Java), without its
