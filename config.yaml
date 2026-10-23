@@ -22,6 +22,25 @@ proot:
   talloc: latest # Statically linked; latest: its newest release on samba.org
   android_api: 29 # Android 10
 
+# OpenJDK 8 (the jdk8 part: Minecraft up to 1.16.5): Termux has no Java older than 17, so its JRE is built
+# here (rootfs/jdk8/build.sh, build-jdk8.yml) from OpenJDK's source with PojavLauncher's patches for Android.
+# Pinned: a patch set fits the OpenJDK version it was made for, so both change together
+jdk8:
+  repo: openjdk/jdk8u
+  ref: jdk8u522-b00
+  # armeabi-v7a: OpenJDK's AArch32 port, at its own tag (its tags of OpenJDK's have none of its code)
+  repo_arm: openjdk/aarch32-port-jdk8u
+  ref_arm: jdk8u512-b07-aarch32-20261009
+  # PojavLauncher's patches (patches/jdk8u_android*.diff), fetched at a commit: its tags are older than them
+  patches: PojavLauncherTeam/android-openjdk-build-multiarch
+  patches_ref: 04b90441da7e9649cb6508a037423f08d1fc531f # buildjre8
+  # The last NDK with GCC (HotSpot 8 doesn't build with clang); its newest platform is Android 5 (21),
+  # which the JRE needs no more than (it runs on every Android the app does)
+  ndk: r10e
+  android_api: 21
+  freetype: 2.10.4 # AWT's fonts, which the JRE links
+  cups: 2.2.4 # Its headers only: the JRE compiles printing against them
+
 # The rootfs, as a tree of parts shipped in the app's jniLibs (lib*.so, so Android unpacks them with
 # it), each installed from Play (with the pages of the tools on it) and unpacked when a tool first
 # needs it, and deleted (its module uninstalled) once none does:
@@ -43,6 +62,8 @@ proot:
 #   that isn't built for an ABI isn't either (say so). A tool can run on several parts (the
 #   Minecraft server: a jdk and cloudflared), its pages a module of their own in the app
 # - script: run on the part's files once they're exported (rootfs/<script>, with STAGE: its folder)
+# - source: not Termux packages but built here, its files as that build makes them (its section of
+#   this file and rootfs/<name>/, e.g. jdk8: build-jdk8.yml)
 # Everything a part's packages use comes along, and only that: the libraries they link, the
 # interpreters their scripts run, the data those come with (rootfs/parts.py linked). Termux's
 # packages depend on a lot only their tools or their building need; that stays out. What several
@@ -171,6 +192,11 @@ packages:
     exclude:
       - alsa-plugins # As jdk25's
     script: jdk.sh
+
+  jdk8: # Java 8: Minecraft up to 1.16.5, on every ABI
+    requires: [core] # Its wrapper's sh (dash)
+    # Not Termux's: OpenJDK 8's JRE built here (the jdk8 section above), its files as they come
+    source: jdk8
 
   jdk17: # Java 17: Minecraft 1.18 to 1.20.4, and 1.17.x (made for Java 16, which no one builds for Android), on every ABI
     requires: [core]

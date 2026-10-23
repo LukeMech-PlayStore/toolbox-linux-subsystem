@@ -29,6 +29,17 @@ Patches in `proot/patches/`:
 
 `ref` and `talloc` in `config.yaml`'s `proot` section are `latest`: each build takes PRoot's newest tag and talloc's newest release (a fixed ref or version pins it; `NDK_VERSION` is in `build-proot.yml`). A patch that no longer applies fails the build.
 
+## OpenJDK 8
+
+Termux has no Java older than 17, and Minecraft up to 1.16.5 runs on Java 8, so the `jdk8` part (its `source: jdk8` in `config.yaml`) is no Termux package: its JRE is built here from OpenJDK's source (`rootfs/jdk8/build.sh`, `build-jdk8.yml`, a job of `build.yml`) and put in the rootfs as it comes (`usr/lib/jvm/java-8-openjdk`, run as `bin/java-8`, a wrapper finding its libraries). `config.yaml`'s `jdk8` section pins what it's built of: OpenJDK's tag (`openjdk/jdk8u`; for `armeabi-v7a`, its AArch32 port's own tag), [PojavLauncher's patches](https://github.com/PojavLauncherTeam/android-openjdk-build-multiarch) for Android at a commit (fetched as they are; a patch set fits the OpenJDK version it was made for, so both change together), and NDK r10e, the last with GCC (HotSpot 8 doesn't build with clang), for Android 5's API (its newest). Two things of its own come along: `libtagfix.so`, which `bin/java` loads first, turns bionic's heap pointer tagging off (Android 11+ tags the top byte of what malloc returns on 64-bit ARM, which HotSpot 8's code generator can't encode: "Field too big for insn"), and `librt.so`, linking libc, gives HotSpot its monotonic clock (bionic has no librt). Its build is kept in a cache as long as what it's built of is the same; its version (`rootfs/release.py`) follows that too, not Termux's build scripts.
+
+By hand, on Linux x86_64 (an hour or so per ABI), into `rootfs/jdk8/out/<abi>/`:
+
+```sh
+sudo apt install autoconf unzip zip patchelf yq jq systemtap-sdt-dev gcc-multilib g++-multilib   libxtst-dev libxrender-dev libxt-dev libxrandr-dev libasound2-dev libelf-dev libfontconfig1-dev libx11-dev
+BOOT_JDK=/path/to/jdk8 bash rootfs/jdk8/build.sh arm64-v8a
+```
+
 ## Releases
 
 Releases are in the releases tab, with tags `YY.MM.DD`, each with the rootfs and PRoot. A rootfs part's version is the tag of the release it last changed in.

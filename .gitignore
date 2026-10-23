@@ -1,2 +1,4 @@
 proot/build
 __pycache__/
+rootfs/jdk8/work
+rootfs/jdk8/out

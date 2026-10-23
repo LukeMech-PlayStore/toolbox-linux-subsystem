@@ -100,17 +100,31 @@ def proot_libs(proot_dir, abi):
     return sorted(n for n in os.listdir(os.path.join(proot_dir, abi)) if n.startswith("lib") and n.endswith(".so"))
 
 
+def sources(config):
+    """The parts' sources built here, not Termux's packages (a part's source: its config section, rootfs/<source>/)."""
+    return {e["source"] for e in (config.get("packages") or {}).values() if e and e.get("source")}
+
+
 def fingerprint(part, config, manifest, proot=None):
     """What decides a part's files: same fingerprint, same archive (the core's: and PRoot)."""
     h = hashlib.sha256()
     entry = (config.get("packages") or {}).get(part)
+    source = entry.get("source") if entry else None
     # What every part is built with (build_packages; not the ABIs, nothing of a part, nor PRoot's
-    # settings: "latest" says nothing, the core gets what PRoot was built of)
-    shared = {k: v for k, v in config.items() if k not in ("packages", "abis", "proot")}
+    # settings: "latest" says nothing, the core gets what PRoot was built of; nor what a part built
+    # here is built of, which is its own)
+    shared = {k: v for k, v in config.items() if k not in ("packages", "abis", "proot") and k not in sources(config)}
     h.update(json.dumps({"part": part, "entry": entry or {}, "shared": shared}, sort_keys=True).encode())
     h.update(b"\0manifest\0" + manifest.encode())
     if proot:
         h.update(b"\0proot\0" + json.dumps(proot, sort_keys=True).encode())
+    if source:
+        # Built here: of its config section and its build's files, not Termux's build scripts
+        h.update(b"\0source\0" + json.dumps(config.get(source), sort_keys=True).encode())
+        folder = os.path.join(HERE, source)
+        for name in sorted(n for n in os.listdir(folder) if os.path.isfile(os.path.join(folder, n))):
+            h.update(f"\0{source}/{name}\0".encode() + read_file(os.path.join(folder, name)))
+        return h.hexdigest()
     for script in SHARED_SCRIPTS + ([entry["script"]] if entry and entry.get("script") else []):
         h.update(f"\0{script}\0".encode() + read_file(os.path.join(HERE, script)))
     return h.hexdigest()
