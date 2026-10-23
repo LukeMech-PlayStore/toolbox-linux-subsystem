@@ -52,7 +52,8 @@ mkdir -p "$WORK"
 cd "$WORK"
 
 # The NDK: r10e, the last with GCC (HotSpot 8 doesn't build with clang), a standalone toolchain of it
-NDK="$(dirname "$WORK")/android-ndk-$NDK_VERSION"
+# ANDROID_NDK_HOME's (build-jdk8.yml: setup-ndk's, as build-proot.yml's), else downloaded next to the work
+NDK="${ANDROID_NDK_HOME:-$(dirname "$WORK")/android-ndk-$NDK_VERSION}"
 if [ ! -d "$NDK" ]; then
     wget -nv -O "$NDK.zip" "https://dl.google.com/android/repository/android-ndk-$NDK_VERSION-linux-x86_64.zip"
     unzip -q "$NDK.zip" -d "$(dirname "$NDK")"

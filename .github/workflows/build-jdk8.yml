@@ -19,6 +19,7 @@ jobs:
     outputs:
       matrix: ${{ steps.abis.outputs.matrix }}
       key: ${{ steps.key.outputs.key }}
+      ndk: ${{ steps.key.outputs.ndk }}
     steps:
       - name: Checkout
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
@@ -33,6 +34,7 @@ jobs:
           # What it's built of: its config section and its build's files
           sum=$( { yq -o=json '.jdk8' config.yaml; find rootfs/jdk8 -type f | sort | xargs cat; } | sha256sum | cut -c1-16)
           echo "key=jdk8-$sum" >> $GITHUB_OUTPUT
+          echo "ndk=$(yq -r '.jdk8.ndk' config.yaml)" >> $GITHUB_OUTPUT
 
   build:
     name: Build ${{ matrix.abi }}
@@ -55,6 +57,13 @@ jobs:
           path: rootfs/jdk8/out
           key: ${{ needs.prepare.outputs.key }}-${{ matrix.abi }}
 
+      - name: Setup Android NDK
+        if: steps.cache.outputs.cache-hit != 'true'
+        uses: nttld/setup-ndk@ed92fe6cadad69be94a966a7ee3271275e62f779 # v1.6.0
+        id: setup-ndk
+        with:
+          ndk-version: ${{ needs.prepare.outputs.ndk }}
+
       - name: Setup Boot JDK
         if: steps.cache.outputs.cache-hit != 'true'
         uses: actions/setup-java@b843ebf9b913146b38da2eaa7aeddf76074ae1ad # v6.1.0
@@ -71,6 +80,8 @@ jobs:
 
       - name: Build
         if: steps.cache.outputs.cache-hit != 'true'
+        env:
+          ANDROID_NDK_HOME: ${{ steps.setup-ndk.outputs.ndk-path }}
         run: bash rootfs/jdk8/build.sh "${{ matrix.abi }}"
 
       - name: Pack
