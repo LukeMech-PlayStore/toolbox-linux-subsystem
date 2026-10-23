@@ -106,10 +106,11 @@ for p in jdk8-gcc49-aarch64.patch jdk8-bitmap-arrayallocator.patch; do
     patch -d openjdk -p1 --forward --fuzz=2 < "$HERE/patches/$p"
 done
 
-# What the build expects of a Linux system: X11's and Fontconfig's headers (the host's), CUPS' and
-# libraries bionic has in libc (empty ones)
+# What the build expects of a Linux system: X11's, Fontconfig's and ALSA's headers (the host's: configure
+# looks for them; the patches leave out what would use ALSA), CUPS' and libraries bionic has in libc (empty ones)
 ln -sfn /usr/include/X11 "$INCLUDE/X11"
 ln -sfn /usr/include/fontconfig "$INCLUDE/fontconfig"
+ln -sfn /usr/include/alsa "$INCLUDE/alsa"
 ln -sfn "$CUPS/cups" "$INCLUDE/cups"
 mkdir -p dummy_libs
 for lib in pthread thread_db; do [ -f "dummy_libs/lib$lib.a" ] || ar cru "dummy_libs/lib$lib.a"; done
@@ -137,7 +138,10 @@ bash ./configure \
     --x-libraries=/usr/lib \
     "${boot[@]}" \
     || { cat config.log; exit 1; }
-cd "build/linux-$JDK_CPU-normal-$VM-release"
+# Its wrapper says nothing of configure failing: what that makes tells
+BUILD="build/linux-$JDK_CPU-normal-$VM-release"
+[ -f "$BUILD/spec.gmk" ] || { echo "Error: configure failed" >&2; exit 1; }
+cd "$BUILD"
 # Parallel makes sometimes trip over their own order: once more, as PojavLauncher does
 make JOBS="$JOBS" images || make JOBS="$JOBS" images
 
