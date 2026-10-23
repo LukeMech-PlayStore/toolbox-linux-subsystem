@@ -3,7 +3,7 @@
 It's Linux subsystem and proot builder.
 Builds a Termux-based subsystem and proot, both set up in `config.yaml`: its `packages` section (the rootfs, auto-updated) and its `proot` section (proot's versions). All the generated files are ready-to-paste into jniLibs in Android Studio app project.
 
-Both are built for every ABI Google Play supports: `armeabi-v7a`, `arm64-v8a`, `x86` and `x86_64` (`config.yaml`'s `abis`, with what each build calls them and the runner building them). A part can be built for some of them only (its `abis`), when Termux has no build of its package for the others: `jdk25` (OpenJDK 25) isn't built for `x86`, which OpenJDK dropped. That ABI's build and its `libparts.json.so` leave it out; the app uses `jdk21` there (the Minecraft server, up to 1.21.x).
+Both are built for every ABI Google Play supports: `armeabi-v7a`, `arm64-v8a`, `x86` and `x86_64` (`config.yaml`'s `abis`, with what each build calls them and the runner building them). A part can be built for some of them only (its `abis`), when Termux has no build of its package for the others: `jdk25` (OpenJDK 25) isn't built for `x86`, which OpenJDK dropped. That ABI's build and its `libparts.json.so` leave it out, so the Minecraft server there runs up to 1.21.x (each version on the Java Mojang's metadata names: `jdk17`, `jdk21`, `jdk25`).
 
 ## Rootfs
 
