@@ -61,13 +61,16 @@ patch -d openjdk -p1 --forward --fuzz=2 < "$HERE/patches/jdk8-bitmap-arrayalloca
 
 # What the build expects of a Linux system: X11's, Fontconfig's and ALSA's headers (the host's: configure
 # looks for them; the patches leave out what would use ALSA), CUPS' (printing, which the JRE only compiles
-# against), and libraries bionic has in libc (empty ones)
+# against), libraries bionic has in libc (empty ones), and the C++ runtime the patches link statically:
+# GCC's libsupc++ (the NDK they were made for had it), here the NDK's own (LLVM's libc++ and libc++abi,
+# a linker script by its name)
 ln -sfn /usr/include/X11 "$INCLUDE/X11"
 ln -sfn /usr/include/fontconfig "$INCLUDE/fontconfig"
 ln -sfn /usr/include/alsa "$INCLUDE/alsa"
 ln -sfn /usr/include/cups "$INCLUDE/cups"
 mkdir -p dummy_libs
 for lib in pthread thread_db; do [ -f "dummy_libs/lib$lib.a" ] || "$AR" cru "dummy_libs/lib$lib.a"; done
+echo "INPUT(-lc++_static -lc++abi)" > dummy_libs/libsupc++.a
 
 # OpenJDK 8's C and C++ as clang takes them now: its C has what C99 and newer clangs make errors of
 # (functions used undeclared, ints for pointers), tentative definitions in headers (-fcommon), and its
