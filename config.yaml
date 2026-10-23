@@ -27,8 +27,10 @@ proot:
 # Pinned: a patch set fits the OpenJDK version it was made for, so both change together
 jdk8:
   repo: openjdk/jdk8u
-  ref: jdk8u522-b00
-  # armeabi-v7a: OpenJDK's AArch32 port, at its own tag (its tags of OpenJDK's have none of its code)
+  ref: jdk8u512-b07
+  # armeabi-v7a: OpenJDK's AArch32 port (32-bit ARM, which OpenJDK's own has no HotSpot for), at its
+  # build of the same version (its copies of OpenJDK's tags have none of its code); it comes later than
+  # OpenJDK's, so ref follows it: every ABI on one version
   repo_arm: openjdk/aarch32-port-jdk8u
   ref_arm: jdk8u512-b07-aarch32-20261009
   # PojavLauncher's patches (patches/jdk8u_android*.diff), fetched at a commit: its tags are older than them
