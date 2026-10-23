@@ -81,8 +81,9 @@ BOOT_JDK="${BOOT_JDK:-${JAVA_HOME:-}}"
 [ -n "$BOOT_JDK" ] && boot=(--with-boot-jdk="$BOOT_JDK")
 cd openjdk
 # The tools the build runs on this machine (HotSpot's adlc) compiled with clang too: HotSpot gives them
-# its clang flags. FreeType its own (bundled: OpenJDK's copy, built for Android and shipped in the JRE)
-BUILD_CC=clang BUILD_CXX=clang++ bash ./configure \
+# its clang flags (on the command line: configure ignores them from the environment). FreeType its own
+# (bundled: OpenJDK's copy, built for Android and shipped in the JRE)
+bash ./configure BUILD_CC=clang BUILD_CXX=clang++ \
     --openjdk-target="$TARGET" \
     --with-toolchain-type=clang \
     --with-extra-cflags="$FLAGS" \
