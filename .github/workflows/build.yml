@@ -68,7 +68,16 @@ jobs:
           echo "version=$NEW_TAG" >> $GITHUB_OUTPUT
 
   # ------------------------------------------------------------------
-  # JOB 2: Build (Parallel)
+  # JOB 2: PRoot and its loaders, and OpenJDK 8's JRE (the jdk8 part), in parallel
+  # ------------------------------------------------------------------
+  proot:
+    uses: ./.github/workflows/build-proot.yml
+
+  jdk8:
+    uses: ./.github/workflows/build-jdk8.yml
+
+  # ------------------------------------------------------------------
+  # JOB 3: The rootfs, an ABI each (parallel), once the JRE it puts in as jdk8 is built
   # ------------------------------------------------------------------
   build:
     name: Build ${{ matrix.arch }}
@@ -178,19 +187,7 @@ jobs:
           path: out/
 
   # ------------------------------------------------------------------
-  # JOB 2b: PRoot and its loaders (alongside the rootfs)
-  # ------------------------------------------------------------------
-  proot:
-    uses: ./.github/workflows/build-proot.yml
-
-  # ------------------------------------------------------------------
-  # JOB 2c: OpenJDK 8's JRE (the jdk8 part), built before the rootfs puts it in
-  # ------------------------------------------------------------------
-  jdk8:
-    uses: ./.github/workflows/build-jdk8.yml
-
-  # ------------------------------------------------------------------
-  # JOB 3: Release & Compare
+  # JOB 4: Release & Compare
   # ------------------------------------------------------------------
   release:
     needs: [prepare, build, proot]
