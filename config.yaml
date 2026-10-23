@@ -23,8 +23,8 @@ proot:
   android_api: 29 # Android 10
 
 # OpenJDK 8 (the jdk8 part: Minecraft up to 1.16.5): Termux has no Java older than 17, so its JRE is built
-# here (rootfs/jdk8/build.sh, build-jdk8.yml) from OpenJDK's source with PojavLauncher's patches for Android.
-# Pinned: a patch set fits the OpenJDK version it was made for, so both change together
+# here (rootfs/jdk8/build.sh, build-jdk8.yml) from OpenJDK's source with rootfs/jdk8/patches (PojavLauncher's
+# for Android, and what the update pinned needs). Pinned: the patches fit it, so both change together
 jdk8:
   repo: openjdk/jdk8u
   ref: jdk8u512-b07
@@ -33,9 +33,6 @@ jdk8:
   # OpenJDK's, so ref follows it: every ABI on one version
   repo_arm: openjdk/aarch32-port-jdk8u
   ref_arm: jdk8u512-b07-aarch32-20261009
-  # PojavLauncher's patches (patches/jdk8u_android*.diff), fetched at a commit: its tags are older than them
-  patches: PojavLauncherTeam/android-openjdk-build-multiarch
-  patches_ref: 04b90441da7e9649cb6508a037423f08d1fc531f # buildjre8
   # The last NDK with GCC (HotSpot 8 doesn't build with clang); its newest platform is Android 5 (21),
   # which the JRE needs no more than (it runs on every Android the app does)
   ndk: r10e

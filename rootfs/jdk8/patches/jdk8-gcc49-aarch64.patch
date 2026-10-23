@@ -1,0 +1,11 @@
+--- a/common/autoconf/generated-configure.sh
++++ b/common/autoconf/generated-configure.sh
+@@ -41333,7 +41333,7 @@
+       { $as_echo "$as_me:${as_lineno-$LINENO}: result: found $COMPILER_VERSION_NUMBER_MAJOR.x" >&5
+ $as_echo "found $COMPILER_VERSION_NUMBER_MAJOR.x" >&6; }
+       if test $COMPILER_VERSION_NUMBER_MAJOR -lt 5; then
+-        as_fn_error $? "GCC < 5 may incorrectly compile HotSpot on aarch64. See JDK-8360869." "$LINENO" 5
++        : # NDK r10e: GCC 4.9, the last NDK GCC (see config.yaml)
+       fi
+     fi
+   fi

@@ -1,6 +1,7 @@
 #!/bin/bash
 # OpenJDK 8's JRE for one ABI (the jdk8 part): Termux has no Java older than 17, so it's built here
-# from OpenJDK's source with PojavLauncher's patches for Android, cross-compiled with the NDK's GCC
+# from OpenJDK's source with patches/ (PojavLauncher's for Android, and what the update pinned needs),
+# cross-compiled with the NDK's GCC
 # (config.yaml's jdk8 section). Into out/<abi>/: the part's files (usr/, as the rootfs's) and what it
 # was built of (info.json). Runs on Linux x86_64 (build-jdk8.yml; by hand too, see README.md).
 #
@@ -28,8 +29,6 @@ NDK_VERSION=$(cfg ndk)
 API=$(cfg android_api)
 FREETYPE_VERSION=$(cfg freetype)
 CUPS_VERSION=$(cfg cups)
-PATCHES_REPO=$(cfg patches)
-PATCHES_REF=$(cfg patches_ref)
 
 # Each ABI as the NDK, OpenJDK's build and its lib/ folder name it. 32-bit ones get HotSpot's client VM
 # (as PojavLauncher's), ARM's from the AArch32 port (its own repository and tags)
@@ -44,10 +43,10 @@ esac
 TARGET_PHYS=$TARGET
 [ "$ABI" = armeabi-v7a ] && TARGET_PHYS=aarch32-linux-androideabi
 
-# Their tags (the AArch32 port's own: its tags of OpenJDK's have none of its code), the patches pinned along with them
+# Their tags (the AArch32 port's own: its copies of OpenJDK's have none of its code), which patches/ fits
 SRC_REF=$(cfg ref)
 [ "$ABI" = armeabi-v7a ] && SRC_REF=$(cfg ref_arm)
-echo "OpenJDK $REPO@$SRC_REF for $ABI ($TARGET, $VM VM), $PATCHES_REPO@$PATCHES_REF, NDK $NDK_VERSION (android-$API)"
+echo "OpenJDK $REPO@$SRC_REF for $ABI ($TARGET, $VM VM), NDK $NDK_VERSION (android-$API)"
 
 mkdir -p "$WORK"
 cd "$WORK"
@@ -89,26 +88,23 @@ fi
 CUPS="$WORK/cups-$CUPS_VERSION"
 [ -d "$CUPS" ] || wget -nv -O- "https://github.com/apple/cups/releases/download/v$CUPS_VERSION/cups-$CUPS_VERSION-source.tar.gz" | tar -xz
 
-# The source at its tag and PojavLauncher's patches for Android (fetched as they are, not copied here)
-rm -rf openjdk patches-src
+# The source at its tag, and the patches for it
+rm -rf openjdk
 git clone -q --depth 1 -b "$SRC_REF" "https://github.com/$REPO" openjdk
-git init -q patches-src
-git -C patches-src fetch -q --depth 1 "https://github.com/$PATCHES_REPO" "$PATCHES_REF"
-git -C patches-src checkout -q FETCH_HEAD
-PATCHES_COMMIT=$(git -C patches-src rev-parse --short HEAD)
-apply() {
-    # As PojavLauncher applies them: what no longer fits upstream (a newer update) is left out, and said
-    git -C openjdk apply --reject --whitespace=fix "$WORK/patches-src/patches/$1" || echo "::warning::$1: some hunks didn't apply"
+pojav() {
+    # PojavLauncher's for Android (jdk8-android*.patch: its buildjre8's jdk8u_android*.diff), as it applies
+    # them: what no longer fits upstream (a newer update) is left out, and said
+    git -C openjdk apply --reject --whitespace=fix "$HERE/patches/$1" || echo "::warning::$1: some hunks didn't apply"
 }
-apply jdk8u_android.diff
-if [ "$ABI" = armeabi-v7a ]; then apply jdk8u_android_aarch32.diff; else apply jdk8u_android_main.diff; fi
-[ "$ABI" = x86 ] && apply jdk8u_android_page_trap_fix.diff
-# Newer updates than the patches know: configure refuses GCC < 5 for AArch64 (JDK-8360869; the NDK's is
-# 4.9), and BitMap's ArrayAllocator isn't instantiated where libjvm needs it (as termux-java8 does)
-sed -i 's|as_fn_error.*JDK-8360869.*|:|' openjdk/common/autoconf/generated-configure.sh
-grep -q 'template class ArrayAllocator<BitMap::bm_word_t, mtInternal>;' openjdk/hotspot/src/share/vm/utilities/bitMap.cpp || \
-    sed -i '/BitMap::BitMap(bm_word_t\* map, idx_t size_in_bits)/i template class ArrayAllocator<BitMap::bm_word_t, mtInternal>;' \
-        openjdk/hotspot/src/share/vm/utilities/bitMap.cpp
+pojav jdk8-android.patch
+if [ "$ABI" = armeabi-v7a ]; then pojav jdk8-android-aarch32.patch; else pojav jdk8-android-main.patch; fi
+if [ "$ABI" = x86 ]; then pojav jdk8-android-x86-page-trap.patch; fi
+# What the update pinned needs that they don't know (as termux-java8 builds it): configure refuses GCC < 5
+# for AArch64 (JDK-8360869; the NDK's is 4.9), BitMap's ArrayAllocator isn't instantiated where libjvm
+# needs it. Each has to fit (the AArch32 port's configure is OpenJDK's, further down)
+for p in jdk8-gcc49-aarch64.patch jdk8-bitmap-arrayallocator.patch; do
+    patch -d openjdk -p1 --forward --fuzz=2 < "$HERE/patches/$p"
+done
 
 # What the build expects of a Linux system: X11's and Fontconfig's headers (the host's), CUPS' and
 # libraries bionic has in libc (empty ones)
@@ -179,7 +175,6 @@ chmod 755 "$OUT/usr/bin/java-8"
 
 # What it was built of: what the app lists it holds, and what decides its version (rootfs/release.py)
 VERSION=$(sed -n 's/^JAVA_VERSION="\(.*\)"/\1/p' "$JRE/release")
-jq -n --arg name openjdk8-jre --arg src "$REPO@$SRC_REF" --arg patches "$PATCHES_REPO@$PATCHES_COMMIT" \
-    --arg ndk "$NDK_VERSION" --arg api "$API" --arg version "$VERSION" \
-    '{name: $name, source: $src, patches: $patches, ndk: $ndk, android_api: $api, version: $version}' > "$OUT/../info-$ABI.json"
+jq -n --arg name openjdk8-jre --arg src "$REPO@$SRC_REF" --arg ndk "$NDK_VERSION" --arg api "$API" --arg version "$VERSION" \
+    '{name: $name, source: $src, ndk: $ndk, android_api: $api, version: $version}' > "$OUT/../info-$ABI.json"
 echo "Built OpenJDK $VERSION ($SRC_REF) for $ABI: $(du -sh "$OUT" | cut -f1)"

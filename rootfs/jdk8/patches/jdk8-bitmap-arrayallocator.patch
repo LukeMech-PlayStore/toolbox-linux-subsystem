@@ -1,0 +1,12 @@
+--- a/hotspot/src/share/vm/utilities/bitMap.cpp
++++ b/hotspot/src/share/vm/utilities/bitMap.cpp
+@@ -43,6 +43,9 @@
+ #endif
+ 
+ 
++// The ArrayAllocator BitMap uses, instantiated where libjvm links it (NDK r10e's GCC 4.9 leaves it undefined)
++template class ArrayAllocator<BitMap::bm_word_t, mtInternal>;
++
+ BitMap::BitMap(bm_word_t* map, idx_t size_in_bits) :
+   _map(map), _size(size_in_bits), _map_allocator(false)
+ {

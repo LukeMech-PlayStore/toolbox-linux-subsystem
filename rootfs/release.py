@@ -122,7 +122,9 @@ def fingerprint(part, config, manifest, proot=None):
         # Built here: of its config section and its build's files, not Termux's build scripts
         h.update(b"\0source\0" + json.dumps(config.get(source), sort_keys=True).encode())
         folder = os.path.join(HERE, source)
-        for name in sorted(n for n in os.listdir(folder) if os.path.isfile(os.path.join(folder, n))):
+        files = sorted(os.path.relpath(os.path.join(root, n), folder).replace(os.sep, "/")
+                       for root, _, names in os.walk(folder) for n in names)
+        for name in files:
             h.update(f"\0{source}/{name}\0".encode() + read_file(os.path.join(folder, name)))
         return h.hexdigest()
     for script in SHARED_SCRIPTS + ([entry["script"]] if entry and entry.get("script") else []):

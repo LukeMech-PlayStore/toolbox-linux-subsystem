@@ -31,15 +31,14 @@ jobs:
         id: key
         run: |
           # What it's built of: its config section and its build's files
-          sum=$( { yq -o=json '.jdk8' config.yaml; cat rootfs/jdk8/build.sh rootfs/jdk8/libtagfix.c; } | sha256sum | cut -c1-16)
+          sum=$( { yq -o=json '.jdk8' config.yaml; find rootfs/jdk8 -type f | sort | xargs cat; } | sha256sum | cut -c1-16)
           echo "key=jdk8-$sum" >> $GITHUB_OUTPUT
 
   build:
     name: Build ${{ matrix.abi }}
     needs: prepare
-    # Its NDK's GCC runs on x86_64 Linux alone; 22.04, as PojavLauncher's builds (newer host headers
-    # trip OpenJDK 8's build)
-    runs-on: ubuntu-22.04
+    # Its NDK's GCC runs on x86_64 Linux alone
+    runs-on: ubuntu-latest
     strategy:
       fail-fast: false
       matrix:
