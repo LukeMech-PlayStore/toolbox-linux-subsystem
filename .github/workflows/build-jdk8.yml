@@ -7,6 +7,8 @@ name: Build JDK 8
 on:
   workflow_call:
   workflow_dispatch:
+  push: # TEMPORARY: building it on its branch, before it goes to main
+    branches: [jdk8]
 
 permissions:
   contents: read
