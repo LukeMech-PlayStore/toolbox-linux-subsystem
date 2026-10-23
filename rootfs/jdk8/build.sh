@@ -73,8 +73,8 @@ fi
 INCLUDE="$TOOLCHAIN/sysroot/usr/include"
 export AR=$TOOLCHAIN/bin/$TARGET-ar AS=$TOOLCHAIN/bin/$TARGET-as CC=$TOOLCHAIN/bin/$TARGET-gcc CXX=$TOOLCHAIN/bin/$TARGET-g++
 export LD=$TOOLCHAIN/bin/$TARGET-ld OBJCOPY=$TOOLCHAIN/bin/$TARGET-objcopy RANLIB=$TOOLCHAIN/bin/$TARGET-ranlib STRIP=$TOOLCHAIN/bin/$TARGET-strip
-export CPPFLAGS="-I$INCLUDE -I$INCLUDE/$TARGET"
-export LDFLAGS="-L$NDK/platforms/android-$API/arch-$SHORT/usr/lib"
+# Its compilers have the sysroot built in: no -I or -L of it, which the build would also give the tools it
+# compiles for this machine (bionic's headers in place of glibc's)
 
 # FreeType (AWT's fonts), which the JRE links: built for Android, as it is
 FREETYPE="$WORK/freetype-$FREETYPE_VERSION/build_android"
@@ -117,16 +117,12 @@ for lib in pthread thread_db; do [ -f "dummy_libs/lib$lib.a" ] || ar cru "dummy_
 boot=()
 BOOT_JDK="${BOOT_JDK:-${JAVA_HOME:-}}"
 [ -n "$BOOT_JDK" ] && boot=(--with-boot-jdk="$BOOT_JDK")
-# The target's flags go to configure alone: in the environment, the tools the build compiles for this
-# machine got them too, Android's headers in place of the host's (its newer C++ headers trip on them)
-TARGET_CPPFLAGS=$CPPFLAGS TARGET_LDFLAGS=$LDFLAGS
-unset CPPFLAGS LDFLAGS
 cd openjdk
 bash ./configure \
     --openjdk-target="$TARGET_PHYS" \
-    --with-extra-cflags="$TARGET_CPPFLAGS -DLE_STANDALONE -O3 -D__ANDROID__" \
-    --with-extra-cxxflags="$TARGET_CPPFLAGS -DLE_STANDALONE -O3 -D__ANDROID__" \
-    --with-extra-ldflags="$TARGET_LDFLAGS -L$WORK/dummy_libs" \
+    --with-extra-cflags="-DLE_STANDALONE -O3 -D__ANDROID__" \
+    --with-extra-cxxflags="-DLE_STANDALONE -O3 -D__ANDROID__" \
+    --with-extra-ldflags="-L$WORK/dummy_libs" \
     --enable-option-checking=fatal \
     --with-jdk-variant=normal \
     --with-jvm-variants="$VM" \
