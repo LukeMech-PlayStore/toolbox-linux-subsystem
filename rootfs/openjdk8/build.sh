@@ -56,8 +56,12 @@ apply_patch() {
 apply_patch jdk8-android.patch
 if [ "$ABI" = armeabi-v7a ]; then apply_patch jdk8-android-aarch32.patch; else apply_patch jdk8-android-main.patch; fi
 if [ "$ABI" = x86 ]; then apply_patch jdk8-android-x86-page-trap.patch; fi
-# What the update pinned needs that they don't know: BitMap's ArrayAllocator instantiated where libjvm needs it
-patch -d openjdk -p1 --forward --fuzz=2 < "$HERE/patches/jdk8-bitmap-arrayallocator.patch"
+# Ours, each has to fit: what the update pinned needs that they don't know (BitMap's ArrayAllocator
+# instantiated where libjvm needs it), and bionic's own iconv in place of their copy of it (libtinyiconv,
+# for Android before 9: what the API level built for has it)
+for p in jdk8-bitmap-arrayallocator.patch jdk8-system-iconv.patch; do
+    patch -d openjdk -p1 --forward --fuzz=2 < "$HERE/patches/$p"
+done
 
 # What the build expects of a Linux system: X11's, Fontconfig's and ALSA's headers (the host's: configure
 # looks for them; the patches leave out what would use ALSA), CUPS' (printing, which the JRE only compiles
