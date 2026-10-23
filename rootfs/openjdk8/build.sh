@@ -72,11 +72,12 @@ for lib in pthread thread_db; do [ -f "dummy_libs/lib$lib.a" ] || "$AR" cru "dum
 # OpenJDK 8's C and C++ as clang takes them now: its C has what C99 and newer clangs make errors of
 # (functions used undeclared, ints for pointers), tentative definitions in headers (-fcommon), and its
 # C++ is C++98's (register, dynamic exception specifications). HotSpot tests this against NULL, which clang
-# may otherwise drop as never true (as OpenJDK tells GCC). Its exported symbols' list names some it no
-# longer has, which LLVM's linker refuses where GNU's didn't mind
+# may otherwise drop as never true (as OpenJDK tells GCC). Its libraries position-independent on 32-bit
+# ABIs too (OpenJDK 8 doesn't make them so there, and Android loads no code relocated in place). Its
+# exported symbols' list names some it no longer has, which LLVM's linker refuses where GNU's didn't mind
 C_OLD="-fcommon -Wno-error=implicit-function-declaration -Wno-error=implicit-int -Wno-error=int-conversion
  -Wno-error=incompatible-pointer-types -Wno-error=incompatible-function-pointer-types -Wno-error=return-type"
-FLAGS="-DLE_STANDALONE -O3 -D__ANDROID__ -fno-delete-null-pointer-checks $(echo $C_OLD)"
+FLAGS="-DLE_STANDALONE -O3 -D__ANDROID__ -fPIC -fno-delete-null-pointer-checks $(echo $C_OLD)"
 LDFLAGS_OLD="-Wl,--undefined-version"
 
 boot=()
