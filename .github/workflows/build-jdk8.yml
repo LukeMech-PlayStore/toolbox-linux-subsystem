@@ -2,8 +2,7 @@ name: Build JDK 8
 
 # OpenJDK 8's JRE for every ABI (config.yaml's jdk8 section and abis), cross-compiled with the NDK
 # (rootfs/jdk8/build.sh): a job of build.yml, whose build puts it in the rootfs as the jdk8 part. Run by hand,
-# it just builds it (an artifact per ABI, no release). Kept in a cache as long as what it's built of is
-# the same (its config section, rootfs/jdk8/): an hour per ABI, not every release's
+# it just builds it (an artifact per ABI, no release)
 on:
   workflow_call:
   workflow_dispatch:
@@ -17,23 +16,16 @@ jobs:
   prepare:
     runs-on: ubuntu-latest
     outputs:
-      matrix: ${{ steps.abis.outputs.matrix }}
-      key: ${{ steps.key.outputs.key }}
-      ndk: ${{ steps.key.outputs.ndk }}
+      matrix: ${{ steps.config.outputs.matrix }}
+      ndk: ${{ steps.config.outputs.ndk }}
     steps:
       - name: Checkout
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
 
-      - name: Read ABIs
-        id: abis
-        run: echo "matrix=$(yq -o=json -I=0 '[.abis | keys[]]' config.yaml)" >> $GITHUB_OUTPUT
-
-      - name: Cache Key
-        id: key
+      - name: Read Config
+        id: config
         run: |
-          # What it's built of: its config section and its build's files
-          sum=$( { yq -o=json '.jdk8' config.yaml; find rootfs/jdk8 -type f | sort | xargs cat; } | sha256sum | cut -c1-16)
-          echo "key=jdk8-$sum" >> $GITHUB_OUTPUT
+          echo "matrix=$(yq -o=json -I=0 '[.abis | keys[]]' config.yaml)" >> $GITHUB_OUTPUT
           echo "ndk=$(yq -r '.jdk8.ndk' config.yaml)" >> $GITHUB_OUTPUT
 
   build:
@@ -50,36 +42,25 @@ jobs:
       - name: Checkout
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
 
-      - name: Built Before
-        id: cache
-        uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
-        with:
-          path: rootfs/jdk8/out
-          key: ${{ needs.prepare.outputs.key }}-${{ matrix.abi }}
-
       - name: Setup Android NDK
-        if: steps.cache.outputs.cache-hit != 'true'
         uses: nttld/setup-ndk@ed92fe6cadad69be94a966a7ee3271275e62f779 # v1.6.0
         id: setup-ndk
         with:
           ndk-version: ${{ needs.prepare.outputs.ndk }}
 
       - name: Setup Boot JDK
-        if: steps.cache.outputs.cache-hit != 'true'
         uses: actions/setup-java@b843ebf9b913146b38da2eaa7aeddf76074ae1ad # v6.1.0
         with:
           distribution: zulu
           java-version: 8
 
       - name: Install Build Dependencies
-        if: steps.cache.outputs.cache-hit != 'true'
         run: |
           sudo apt-get update
           sudo apt-get -y install autoconf unzip zip patchelf systemtap-sdt-dev gcc-multilib g++-multilib \
             libxtst-dev libxrender-dev libxt-dev libxrandr-dev libasound2-dev libcups2-dev libelf-dev libfontconfig1-dev libx11-dev
 
       - name: Build
-        if: steps.cache.outputs.cache-hit != 'true'
         env:
           ANDROID_NDK_HOME: ${{ steps.setup-ndk.outputs.ndk-path }}
         run: bash rootfs/jdk8/build.sh "${{ matrix.abi }}"
