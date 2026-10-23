@@ -83,11 +83,11 @@ if [ ! -d "$FREETYPE" ]; then
     wget -nv -O- "https://downloads.sourceforge.net/project/freetype/freetype2/$FREETYPE_VERSION/freetype-$FREETYPE_VERSION.tar.gz" | tar -xz
     (cd "freetype-$FREETYPE_VERSION" \
         && PATH="$TOOLCHAIN/bin:$PATH" ./configure --host="$TARGET" --prefix="$FREETYPE" \
-            --without-zlib --with-brotli=no --with-png=no --with-harfbuzz=no \
+            --without-zlib --with-bzip2=no --with-brotli=no --with-png=no --with-harfbuzz=no \
         && CFLAGS=-fno-rtti CXXFLAGS=-fno-rtti make -j"$JOBS" && make install)
 fi
 CUPS="$WORK/cups-$CUPS_VERSION"
-[ -d "$CUPS" ] || wget -nv -O- "https://github.com/apple/cups/releases/download/v$CUPS_VERSION/cups-$CUPS_VERSION-source.tar.gz" | tar -xz
+[ -d "$CUPS" ] || wget -nv -O- "https://github.com/OpenPrinting/cups/releases/download/v$CUPS_VERSION/cups-$CUPS_VERSION-source.tar.gz" | tar -xz
 
 # The source at its tag, and the patches for it
 rm -rf openjdk
@@ -119,12 +119,16 @@ for lib in pthread thread_db; do [ -f "dummy_libs/lib$lib.a" ] || ar cru "dummy_
 boot=()
 BOOT_JDK="${BOOT_JDK:-${JAVA_HOME:-}}"
 [ -n "$BOOT_JDK" ] && boot=(--with-boot-jdk="$BOOT_JDK")
+# The target's flags go to configure alone: in the environment, the tools the build compiles for this
+# machine got them too, Android's headers in place of the host's (its newer C++ headers trip on them)
+TARGET_CPPFLAGS=$CPPFLAGS TARGET_LDFLAGS=$LDFLAGS
+unset CPPFLAGS LDFLAGS
 cd openjdk
 bash ./configure \
     --openjdk-target="$TARGET_PHYS" \
-    --with-extra-cflags="$CPPFLAGS -DLE_STANDALONE -O3 -D__ANDROID__" \
-    --with-extra-cxxflags="$CPPFLAGS -DLE_STANDALONE -O3 -D__ANDROID__" \
-    --with-extra-ldflags="$LDFLAGS -L$WORK/dummy_libs" \
+    --with-extra-cflags="$TARGET_CPPFLAGS -DLE_STANDALONE -O3 -D__ANDROID__" \
+    --with-extra-cxxflags="$TARGET_CPPFLAGS -DLE_STANDALONE -O3 -D__ANDROID__" \
+    --with-extra-ldflags="$TARGET_LDFLAGS -L$WORK/dummy_libs" \
     --enable-option-checking=fatal \
     --with-jdk-variant=normal \
     --with-jvm-variants="$VM" \
