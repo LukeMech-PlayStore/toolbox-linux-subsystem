@@ -1,12 +1,12 @@
 #!/bin/bash
 # OpenJDK 8's JRE for one ABI (the jdk8 part): Termux has no Java older than 17, so it's built here
-# from OpenJDK's source with patches/ (PojavLauncher's for Android, and what the update pinned needs),
-# cross-compiled with the NDK's clang (config.yaml's jdk8 section). Into out/<abi>/: the part's files
-# (usr/, as the rootfs's) and what it was built of (info-<abi>.json). Runs on Linux x86_64 (build-jdk8.yml;
-# by hand too, see README.md).
+# from OpenJDK's source (config.yaml's sources.openjdk8) with patches/ (PojavLauncher's for Android, and
+# what the update pinned needs), cross-compiled with the NDK's clang (ndk.sh). Into out/<abi>/: the part's
+# files (usr/, as the rootfs's), and out/info-<abi>.json: what it was built of. Runs on Linux x86_64
+# (build-openjdk8.yml; by hand too, see README.md).
 #
-# usage: build.sh <abi>   (arm64-v8a, armeabi-v7a, x86, x86_64)
-# ANDROID_NDK_HOME: the NDK (else downloaded); BOOT_JDK: a JDK 8 to build with (JAVA_HOME's, else PATH's)
+# usage: build.sh <abi>   (a name of config.yaml's android.abis)
+# BOOT_JDK: a JDK 8 to build with (JAVA_HOME's, else PATH's); the NDK as ndk.sh finds it
 set -euo pipefail
 
 ABI="${1:?usage: build.sh <abi>}"
@@ -18,58 +18,32 @@ JOBS="${JOBS:-$(nproc)}"
 
 cfg() {
     local value
-    value=$(yq -r ".jdk8.$1" "$CONFIG")
+    value=$(yq -r ".sources.openjdk8.$1" "$CONFIG")
     if [ -z "$value" ] || [ "$value" = null ]; then
-        echo "Error: jdk8.$1 is missing in $CONFIG" >&2
+        echo "Error: sources.openjdk8.$1 is missing in $CONFIG" >&2
         exit 1
     fi
     echo "$value"
 }
-NDK_VERSION=$(cfg ndk)
-API=$(cfg android_api)
-FREETYPE_VERSION=$(cfg freetype)
 
-# Each ABI as clang, OpenJDK's build and its lib/ folder name it. 32-bit ones get HotSpot's client VM
-# (as PojavLauncher's), ARM's from the AArch32 port (its own repository and tags, its own triple)
-case "$ABI" in
-    arm64-v8a)   CLANG=aarch64-linux-android;     TARGET=aarch64-linux-android;     JDK_CPU=aarch64; LIB_ARCH=aarch64; VM=server; REPO=$(cfg repo) ;;
-    armeabi-v7a) CLANG=armv7a-linux-androideabi;  TARGET=aarch32-linux-androideabi; JDK_CPU=aarch32; LIB_ARCH=aarch32; VM=client; REPO=$(cfg repo_arm) ;;
-    x86)         CLANG=i686-linux-android;        TARGET=i686-linux-android;        JDK_CPU=x86;     LIB_ARCH=i386;    VM=client; REPO=$(cfg repo) ;;
-    x86_64)      CLANG=x86_64-linux-android;      TARGET=x86_64-linux-android;      JDK_CPU=x86_64;  LIB_ARCH=amd64;   VM=server; REPO=$(cfg repo) ;;
-    *) echo "Error: unknown ABI $ABI" >&2; exit 1 ;;
+# The NDK's clang for the ABI (the sysroot built in: no -I or -L of it, which the build would also give
+# the tools it compiles for this machine, bionic's headers in place of glibc's), and LLVM's binutils
+source "$HERE/../../ndk.sh"
+ndk_setup "$ABI"
+INCLUDE="$NDK_SYSROOT/usr/include"
+
+# Each ABI as OpenJDK's build and its lib/ folder name it. 32-bit ones get HotSpot's client VM (as
+# PojavLauncher's), ARM's from the AArch32 port (its own repository, tags and triple)
+case "$NDK_ARCH" in
+    arm64)  TARGET=aarch64-linux-android;     JDK_CPU=aarch64; LIB_ARCH=aarch64; VM=server; REPO=$(cfg repo);     SRC_REF=$(cfg ref) ;;
+    arm)    TARGET=aarch32-linux-androideabi; JDK_CPU=aarch32; LIB_ARCH=aarch32; VM=client; REPO=$(cfg repo_arm); SRC_REF=$(cfg ref_arm) ;;
+    x86)    TARGET=i686-linux-android;        JDK_CPU=x86;     LIB_ARCH=i386;    VM=client; REPO=$(cfg repo);     SRC_REF=$(cfg ref) ;;
+    x86_64) TARGET=x86_64-linux-android;      JDK_CPU=x86_64;  LIB_ARCH=amd64;   VM=server; REPO=$(cfg repo);     SRC_REF=$(cfg ref) ;;
 esac
-
-# Their tags (the AArch32 port's own: its copies of OpenJDK's have none of its code), which patches/ fits
-SRC_REF=$(cfg ref)
-[ "$ABI" = armeabi-v7a ] && SRC_REF=$(cfg ref_arm)
-echo "OpenJDK $REPO@$SRC_REF for $ABI ($TARGET, $VM VM), NDK $NDK_VERSION (android-$API)"
+echo "OpenJDK $REPO@$SRC_REF for $ABI ($TARGET, $VM VM)"
 
 mkdir -p "$WORK"
 cd "$WORK"
-
-# The NDK: ANDROID_NDK_HOME's (build-jdk8.yml: setup-ndk's, as build-proot.yml's), else downloaded next to the work
-NDK="${ANDROID_NDK_HOME:-$(dirname "$WORK")/android-ndk-$NDK_VERSION}"
-if [ ! -d "$NDK" ]; then
-    wget -nv -O "$NDK.zip" "https://dl.google.com/android/repository/android-ndk-$NDK_VERSION-linux-x86_64.zip"
-    unzip -q "$NDK.zip" -d "$(dirname "$NDK")"
-    rm "$NDK.zip"
-fi
-# Its clang for the ABI and API (the sysroot built in: no -I or -L of it, which the build would also give
-# the tools it compiles for this machine, bionic's headers in place of glibc's), and LLVM's binutils
-TOOLS="$NDK/toolchains/llvm/prebuilt/linux-x86_64"
-INCLUDE="$TOOLS/sysroot/usr/include"
-export CC="$TOOLS/bin/$CLANG$API-clang" CXX="$TOOLS/bin/$CLANG$API-clang++"
-export AR="$TOOLS/bin/llvm-ar" NM="$TOOLS/bin/llvm-nm" OBJCOPY="$TOOLS/bin/llvm-objcopy" RANLIB="$TOOLS/bin/llvm-ranlib" STRIP="$TOOLS/bin/llvm-strip"
-
-# FreeType (AWT's fonts), which the JRE links: built for Android, as it is
-FREETYPE="$WORK/freetype-$FREETYPE_VERSION/build_android"
-if [ ! -d "$FREETYPE" ]; then
-    wget -nv -O- "https://downloads.sourceforge.net/project/freetype/freetype2/$FREETYPE_VERSION/freetype-$FREETYPE_VERSION.tar.gz" | tar -xz
-    (cd "freetype-$FREETYPE_VERSION" \
-        && ./configure --host="$CLANG" --prefix="$FREETYPE" \
-            --without-zlib --with-bzip2=no --with-brotli=no --with-png=no --with-harfbuzz=no \
-        && make -j"$JOBS" && make install)
-fi
 
 # The source at its tag, and the patches for it
 rm -rf openjdk
@@ -106,7 +80,9 @@ boot=()
 BOOT_JDK="${BOOT_JDK:-${JAVA_HOME:-}}"
 [ -n "$BOOT_JDK" ] && boot=(--with-boot-jdk="$BOOT_JDK")
 cd openjdk
-bash ./configure \
+# The tools the build runs on this machine (HotSpot's adlc) compiled with clang too: HotSpot gives them
+# its clang flags. FreeType its own (bundled: OpenJDK's copy, built for Android and shipped in the JRE)
+BUILD_CC=clang BUILD_CXX=clang++ bash ./configure \
     --openjdk-target="$TARGET" \
     --with-toolchain-type=clang \
     --with-extra-cflags="$FLAGS" \
@@ -115,12 +91,11 @@ bash ./configure \
     --enable-option-checking=fatal \
     --with-jdk-variant=normal \
     --with-jvm-variants="$VM" \
-    --with-cups-include="$INCLUDE" \
     --with-debug-level=release \
     --disable-precompiled-headers \
+    --with-freetype=bundled \
+    --with-cups-include="$INCLUDE" \
     --with-fontconfig-include="$INCLUDE" \
-    --with-freetype-lib="$FREETYPE/lib" \
-    --with-freetype-include="$FREETYPE/include/freetype2" \
     --x-includes="$INCLUDE/X11" \
     --x-libraries=/usr/lib \
     "${boot[@]}" \
@@ -136,7 +111,7 @@ MAKE_ARGS=(JOBS="$JOBS" USE_CLANG=true WARNINGS_ARE_ERRORS= images)
 make "${MAKE_ARGS[@]}" || make "${MAKE_ARGS[@]}"
 
 # The part: the JRE in Termux's prefix (usr/lib/jvm/java-8-openjdk, as Termux's Java), without its
-# debug info, man pages, or what only desktops use
+# debug info and man pages
 rm -rf "$OUT"
 JRE="$OUT/usr/lib/jvm/java-8-openjdk"
 mkdir -p "$(dirname "$JRE")"
@@ -144,7 +119,6 @@ cp -a images/j2re-image "$JRE"
 rm -rf "$JRE/man"
 find "$JRE" -name '*.diz' -delete
 LIB="$JRE/lib/$LIB_ARCH"
-[ -f "$LIB/libfreetype.so.6" ] && mv "$LIB/libfreetype.so.6" "$LIB/libfreetype.so"
 find "$JRE" -type f \( -name '*.so' -o -path '*/bin/*' \) -exec sh -c 'head -c4 "$1" | grep -q ELF' sh {} \; -print0 \
     | xargs -0 "$STRIP" --strip-unneeded
 
@@ -167,8 +141,8 @@ exec "\$J/bin/java" "\$@"
 EOF
 chmod 755 "$OUT/usr/bin/java-8"
 
-# What it was built of: what the app lists it holds, and what decides its version (rootfs/release.py)
+# What it was built of: what the app lists it holds (rootfs/release.py)
 VERSION=$(sed -n 's/^JAVA_VERSION="\(.*\)"/\1/p' "$JRE/release")
-jq -n --arg name openjdk8-jre --arg src "$REPO@$SRC_REF" --arg ndk "$NDK_VERSION" --arg api "$API" --arg version "$VERSION" \
-    '{name: $name, source: $src, ndk: $ndk, android_api: $api, version: $version}' > "$OUT/../info-$ABI.json"
+jq -n --arg name openjdk8-jre --arg src "$REPO@$SRC_REF" --arg version "$VERSION" \
+    '{name: $name, source: $src, version: $version}' > "$OUT/../info-$ABI.json"
 echo "Built OpenJDK $VERSION ($SRC_REF) for $ABI: $(du -sh "$OUT" | cut -f1)"

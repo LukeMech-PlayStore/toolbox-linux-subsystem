@@ -18,7 +18,7 @@
       build's PRoot; a core keeping its version keeps the previous release's PRoot too.
       A part built for some ABIs only (its abis in config.yaml) is in those alone, and in their
       libparts.json.so alone.
-      <config.json>: config.yaml as JSON (its abis and packages). <current dir>: <arch>/<lib> and
+      <config.json>: config.yaml as JSON (android.abis, rootfs.parts). <current dir>: <arch>/<lib> and
       sizes-<arch>.json of this build (arch: the abi's termux name). <previous dir>: the previous
       release's parts.json and its archives in <abi>/<lib> (both may be missing: then all is new).
       <proot dir>: this build's PRoot, <abi>/lib*.so (build-proot.yml). <proot.json>: what it was
@@ -39,6 +39,7 @@ HERE = os.path.dirname(os.path.abspath(__file__))
 SHARED_SCRIPTS = ["build.sh", "parts.py", "pip-files.py", "rebuild-16k.sh", "termux-build.sh"]
 # How PRoot is built (proot/): its scripts and patches
 PROOT_SRC = os.path.join(HERE, "..", "proot")
+NDK_SETUP = os.path.join(HERE, "..", "ndk.sh")
 
 
 def lib_of(part):
@@ -90,8 +91,10 @@ def proot_of(info_path):
         info = json.load(f)
     h = hashlib.sha256()
     patches = sorted(p for p in os.listdir(os.path.join(PROOT_SRC, "patches")) if p.endswith(".patch"))
-    for name in ["build.sh", "ndk-setup.sh"] + [f"patches/{p}" for p in patches]:
+    for name in ["build.sh"] + [f"patches/{p}" for p in patches]:
         h.update(f"\0{name}\0".encode() + read_file(os.path.join(PROOT_SRC, name)))
+    # The NDK's setup, everything cross-compiled here has it (ndk.sh)
+    h.update(b"\0ndk.sh\0" + read_file(NDK_SETUP))
     return {"ref": info["ref"], "talloc": info["talloc"], "ndk": info["ndk"], "build": h.hexdigest()}
 
 
@@ -100,27 +103,31 @@ def proot_libs(proot_dir, abi):
     return sorted(n for n in os.listdir(os.path.join(proot_dir, abi)) if n.startswith("lib") and n.endswith(".so"))
 
 
-def sources(config):
-    """The parts' sources built here, not Termux's packages (a part's source: its config section, rootfs/<source>/)."""
-    return {e["source"] for e in (config.get("packages") or {}).values() if e and e.get("source")}
+def rootfs_parts(config):
+    """config.yaml's rootfs parts, by name."""
+    return (config.get("rootfs") or {}).get("parts") or {}
 
 
 def fingerprint(part, config, manifest, proot=None):
     """What decides a part's files: same fingerprint, same archive (the core's: and PRoot)."""
     h = hashlib.sha256()
-    entry = (config.get("packages") or {}).get(part)
+    entry = rootfs_parts(config).get(part)
     source = entry.get("source") if entry else None
-    # What every part is built with (build_packages; not the ABIs, nothing of a part, nor PRoot's
-    # settings: "latest" says nothing, the core gets what PRoot was built of; nor what a part built
+    # What every part of Termux's packages is built with (the rootfs's build_packages; not the ABIs, nor
+    # PRoot's settings: "latest" says nothing, the core gets what PRoot was built of; nor what a part built
     # here is built of, which is its own)
-    shared = {k: v for k, v in config.items() if k not in ("packages", "abis", "proot") and k not in sources(config)}
+    shared = {"build_packages": (config.get("rootfs") or {}).get("build_packages")}
     h.update(json.dumps({"part": part, "entry": entry or {}, "shared": shared}, sort_keys=True).encode())
     h.update(b"\0manifest\0" + manifest.encode())
     if proot:
         h.update(b"\0proot\0" + json.dumps(proot, sort_keys=True).encode())
     if source:
-        # Built here: of its config section and its build's files, not Termux's build scripts
-        h.update(b"\0source\0" + json.dumps(config.get(source), sort_keys=True).encode())
+        # Built here: of its config section, the NDK and API it's built with, and its build's files (and
+        # the NDK's setup), not Termux's build scripts
+        android = config.get("android") or {}
+        built_with = {"source": (config.get("sources") or {}).get(source), "ndk": android.get("ndk"), "api": android.get("api")}
+        h.update(b"\0source\0" + json.dumps(built_with, sort_keys=True).encode())
+        h.update(b"\0ndk.sh\0" + read_file(NDK_SETUP))
         folder = os.path.join(HERE, source)
         files = sorted(os.path.relpath(os.path.join(root, n), folder).replace(os.sep, "/")
                        for root, _, names in os.walk(folder) for n in names)
@@ -168,8 +175,8 @@ def merge(tag, config_path, current, manifests, previous, out, proot_dir, proot_
         full = json.load(f)
     config = full
     # The build's (termux) arch -> Android ABI (jniLibs folder)
-    abis = {v["termux"]: abi for abi, v in full["abis"].items()}
-    extensions = {name: part for name, part in (config.get("packages") or {}).items() if name != "core"}
+    abis = {v["termux_arch"]: abi for abi, v in full["android"]["abis"].items()}
+    extensions = {name: part for name, part in rootfs_parts(config).items() if name != "core"}
     parts = ["core"] + list(extensions)
 
     built = {}
