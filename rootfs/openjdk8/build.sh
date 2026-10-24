@@ -90,6 +90,12 @@ for lib in pthread thread_db; do [ -f "dummy_libs/lib$lib.a" ] || ar cru "dummy_
 boot=()
 BOOT_JDK="${BOOT_JDK:-${JAVA_HOME:-}}"
 [ -n "$BOOT_JDK" ] && boot=(--with-boot-jdk="$BOOT_JDK")
+# Its version as the tag's (jdk8u512-b07: java -version says 1.8.0_512-b07, as a release's, not
+# -internal and b00)
+version=()
+if [[ $SRC_REF =~ ^jdk8u([0-9]+)-b([0-9]+) ]]; then
+    version=(--with-update-version="${BASH_REMATCH[1]}" --with-build-number="b${BASH_REMATCH[2]}" --with-milestone=fcs)
+fi
 cd openjdk
 bash ./configure \
     --openjdk-target="$TARGET" \
@@ -107,7 +113,7 @@ bash ./configure \
     --with-freetype=bundled \
     --x-includes="$INCLUDE/X11" \
     --x-libraries=/usr/lib \
-    "${boot[@]}" \
+    "${boot[@]}" "${version[@]}" \
     || { cat config.log; exit 1; }
 # Its wrapper says nothing of configure failing: what that makes tells
 BUILD="build/linux-$JDK_CPU-normal-$VM-release"
@@ -151,8 +157,9 @@ exec "\$J/bin/java" "\$@"
 EOF
 chmod 755 "$OUT/usr/bin/java-8"
 
-# What it was built of: what the app lists it holds (rootfs/release.py)
-VERSION=$(sed -n 's/^JAVA_VERSION="\(.*\)"/\1/p' "$JRE/release")
+# What it was built of: what the app lists it holds (rootfs/release.py), as its tag names it (8u512-b07:
+# the release file's 1.8.0_512 hasn't the build)
+VERSION=${SRC_REF#jdk}
 jq -n --arg name openjdk8-jre --arg src "$REPO@$SRC_REF" --arg ndk "$(cfg ndk)" --arg api "$ANDROID_API" --arg version "$VERSION" \
     '{name: $name, source: $src, ndk: $ndk, api: $api, version: $version}' > "$OUT/../info-$ABI.json"
 echo "Built OpenJDK $VERSION ($SRC_REF) for $ABI: $(du -sh "$OUT" | cut -f1)"

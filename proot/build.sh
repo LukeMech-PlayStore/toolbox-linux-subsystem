@@ -52,38 +52,42 @@ source "$(dirname "$(readlink -f "$0")")/../ndk.sh"
 
 # --- Functions ---
 
+# A GitHub repository at a ref (tag, branch or commit; only the paths given, if any), into <dir>,
+# without .git (nothing's version check picks this one up). Fetched, not cloned with -b, which warns
+# of annotated tags
+fetch_ref() {
+    local repo=$1 ref=$2 dir=$3
+    shift 3
+    rm -rf "$dir"
+    git init -q "$dir"
+    [ $# -eq 0 ] || git -C "$dir" sparse-checkout set "$@"
+    git -C "$dir" fetch -q --depth 1 --filter=blob:none "https://github.com/$repo" "$ref"
+    git -C "$dir" -c advice.detachedHead=false checkout -q FETCH_HEAD
+    rm -rf "$dir/.git"
+}
+
 prepare_sources() {
     echo "==> Preparing Sources..."
     mkdir -p "$SRC_DIR" "$OUT_DIR"
 
-    # 1. Download Talloc
-    if [ ! -d "$SRC_DIR/talloc-$TALLOC_VERSION" ]; then
-        echo " -> Downloading Talloc $TALLOC_VERSION..."
-        # From Samba's GitHub mirror (samba.org is often down), at its tag: what its release tarball
-        # holds (lib/talloc/wscript's DIST_DIRS), laid out as it is. Fetched, not cloned with -b: the tag
-        # is an annotated one, which a shallow clone warns of
-        local git="$SRC_DIR/samba" dir="$SRC_DIR/talloc-$TALLOC_VERSION"
-        rm -rf "$git"
-        git init -q "$git"
-        git -C "$git" sparse-checkout set lib/talloc lib/replace buildtools third_party/waf
-        git -C "$git" fetch -q --depth 1 --filter=blob:none https://github.com/samba-team/samba \
-            "refs/tags/talloc-$TALLOC_VERSION"
-        git -C "$git" -c advice.detachedHead=false checkout -q FETCH_HEAD
+    # 1. Talloc, from Samba's GitHub mirror (samba.org is often down) at its tag: what its release
+    #    tarball holds (lib/talloc/wscript's DIST_DIRS), laid out as it is
+    local dir="$SRC_DIR/talloc-$TALLOC_VERSION" samba="$SRC_DIR/samba"
+    if [ ! -d "$dir" ]; then
+        echo " -> Downloading Talloc $TALLOC_VERSION (samba-team/samba@talloc-$TALLOC_VERSION)..."
+        fetch_ref samba-team/samba "talloc-$TALLOC_VERSION" "$samba" lib/talloc lib/replace buildtools third_party/waf
         mkdir -p "$dir/lib" "$dir/third_party"
-        cp -a "$git/lib/talloc/." "$dir/"
-        cp -a "$git/lib/replace" "$dir/lib/"
-        cp -a "$git/buildtools" "$dir/"
-        cp -a "$git/third_party/waf" "$dir/third_party/"
-        rm -rf "$git"
+        cp -a "$samba/lib/talloc/." "$dir/"
+        cp -a "$samba/lib/replace" "$dir/lib/"
+        cp -a "$samba/buildtools" "$dir/"
+        cp -a "$samba/third_party/waf" "$dir/third_party/"
+        rm -rf "$samba"
     fi
 
-    # 2. Download Proot (tarball, so there is no .git for its version check to pick up)
+    # 2. PRoot, at its tag, patched
     if [ ! -d "$SRC_DIR/proot" ]; then
-        echo " -> Downloading Proot ($PROOT_REF)..."
-        mkdir -p "$SRC_DIR/proot"
-        curl -L -f -o "$SRC_DIR/proot.tar.gz" "https://github.com/${PROOT_REPO}/archive/${PROOT_REF}.tar.gz"
-        tar -xzf "$SRC_DIR/proot.tar.gz" -C "$SRC_DIR/proot" --strip-components=1
-        rm "$SRC_DIR/proot.tar.gz"
+        echo " -> Downloading PRoot ${PROOT_REF#v} (${PROOT_REPO}@${PROOT_REF})..."
+        fetch_ref "$PROOT_REPO" "$PROOT_REF" "$SRC_DIR/proot"
         cd "$SRC_DIR/proot"
 
         # Apply Patches
