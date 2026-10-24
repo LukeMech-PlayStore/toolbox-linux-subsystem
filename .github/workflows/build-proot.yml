@@ -1,7 +1,7 @@
 name: Build PRoot
 
-# PRoot and its loaders for every ABI (config.yaml's proot section and abis), cross-compiled with the
-# NDK (proot/build.sh): a job of build.yml, whose release ships them with the rootfs. Run by hand, it
+# PRoot and its loaders for every ABI (config.yaml's proot and android sections), cross-compiled with
+# the NDK (proot/build.sh): a job of build.yml, whose release ships them with the rootfs. Run by hand, it
 # just builds them (an artifact to look at, no release)
 on:
   workflow_call:
@@ -20,9 +20,6 @@ on:
 permissions:
   contents: read
 
-env:
-  NDK_VERSION: r30
-
 jobs:
   build:
     name: Build PRoot
@@ -30,17 +27,21 @@ jobs:
     outputs:
       proot_ref: ${{ steps.proot.outputs.proot_ref }}
       talloc_version: ${{ steps.proot.outputs.talloc_version }}
-      ndk_version: ${{ env.NDK_VERSION }}
+      ndk_version: ${{ steps.ndk.outputs.version }}
 
     steps:
       - name: Checkout
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
 
+      - name: Read NDK Version
+        id: ndk
+        run: echo "version=$(yq -r '.android.ndk' config.yaml)" >> $GITHUB_OUTPUT
+
       - name: Setup Android NDK
         uses: nttld/setup-ndk@ed92fe6cadad69be94a966a7ee3271275e62f779 # v1.6.0
         id: setup-ndk
         with:
-          ndk-version: ${{ env.NDK_VERSION }}
+          ndk-version: ${{ steps.ndk.outputs.version }}
 
       - name: Build PRoot
         id: proot
@@ -48,7 +49,7 @@ jobs:
           ANDROID_NDK_HOME: ${{ steps.setup-ndk.outputs.ndk-path }}
         run: |
           cd proot
-          chmod +x build.sh ndk-setup.sh
+          chmod +x build.sh
           # Per ABI (jniLibs folder): libproot.so and its loaders, in out/
           ./build.sh
 

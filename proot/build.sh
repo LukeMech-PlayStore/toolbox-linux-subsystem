@@ -1,7 +1,7 @@
 #!/bin/bash
 set -e
 
-# Versions and targets: config.yaml's proot section (CONFIG to read another file)
+# Versions: config.yaml's proot section; targets: its android section (CONFIG to read another file)
 CONFIG="${CONFIG:-$(dirname "$(readlink -f "$0")")/../config.yaml}"
 proot_cfg() {
     local value
@@ -15,7 +15,6 @@ proot_cfg() {
 TALLOC_VERSION=$(proot_cfg talloc)
 PROOT_REPO=$(proot_cfg repo)
 PROOT_REF=$(proot_cfg ref)
-ANDROID_API_LEVEL=$(proot_cfg android_api)
 # "latest": PRoot's newest tag, talloc's newest release (each build takes what's new, as the rootfs does)
 if [ "$PROOT_REF" = latest ]; then
     PROOT_REF=$(git ls-remote --tags --refs --sort=-v:refname "https://github.com/${PROOT_REPO}" | head -n1 | sed 's|.*refs/tags/||')
@@ -31,9 +30,9 @@ echo "PRoot ${PROOT_REPO}@${PROOT_REF}, talloc ${TALLOC_VERSION}"
 if [ -n "${GITHUB_OUTPUT:-}" ]; then
     { echo "proot_ref=$PROOT_REF"; echo "talloc_version=$TALLOC_VERSION"; } >> "$GITHUB_OUTPUT"
 fi
-# Every ABI (config.yaml's abis) as "<jniLibs folder>:<NDK arch>"
-TARGETS=$(yq -r '.abis | to_entries[] | .key + ":" + .value.proot' "$CONFIG")
-[ -n "$TARGETS" ] || { echo "Error: no abis in $CONFIG" >&2; exit 1; }
+# Every ABI (config.yaml's android.abis: the jniLibs folders)
+ABIS=$(yq -r '.android.abis | keys[]' "$CONFIG")
+[ -n "$ABIS" ] || { echo "Error: no android.abis in $CONFIG" >&2; exit 1; }
 
 # --- Directories ---
 BUILD_DIR="${PWD}/build"
@@ -41,7 +40,8 @@ SRC_DIR="${PWD}/src"
 OUT_DIR="${PWD}/out"
 PATCH_DIR="${PWD}/patches"
 
-source ./ndk-setup.sh
+# The NDK (ndk_setup), as everything cross-compiled here has it
+source "$(dirname "$(readlink -f "$0")")/../ndk.sh"
 
 # --- Functions ---
 
@@ -109,8 +109,16 @@ EOF
 }
 
 build_arch() {
-    local ARCH=$1 ABI_DIR=$2
-    echo "==> Building for Architecture: $ARCH ($ABI_DIR)"
+    local ABI_DIR=$1
+    echo "==> Building for $ABI_DIR"
+
+    # 1. Setup Environment: the NDK's clang for it; cpufeatures' headers, position-independent code, and
+    #    64-bit off_t (every API level the app runs on has it) for talloc's configure
+    ndk_setup "$ABI_DIR"
+    local ARCH=$NDK_ARCH
+    unset CFLAGS LDFLAGS CXXFLAGS
+    export CFLAGS="-I${ANDROID_NDK_HOME}/sources/android/cpufeatures -fPIC"
+    export FILE_OFFSET_BITS="OK"
 
     # Define paths for this arch
     local ARCH_BUILD_DIR="$BUILD_DIR/$ARCH"
@@ -119,9 +127,6 @@ build_arch() {
     # Clean build dirs
     rm -rf "$ARCH_BUILD_DIR"
     mkdir -p "$STATIC_ROOT"
-
-    # 1. Setup Environment
-    setup_ndk_env "$ARCH" "$ANDROID_API_LEVEL" "$ANDROID_NDK_HOME"
 
     # 2. Build Talloc (Static)
     echo " -> Building Talloc..."
@@ -183,7 +188,7 @@ build_arch() {
     echo " -> Checking 16 KB alignment..."
     local f align
     for f in "$FINAL_OUT"/*.so; do
-        for align in $("$(dirname "$STRIP")/llvm-readelf" -lW "$f" | awk '$1 == "LOAD" { print $NF }'); do
+        for align in $("$READELF" -lW "$f" | awk '$1 == "LOAD" { print $NF }'); do
             if (( align < 16384 )); then
                 echo "Error: $(basename "$f") ($ABI_DIR) has a LOAD segment aligned to $align"
                 exit 1
@@ -193,15 +198,15 @@ build_arch() {
 
     make distclean >/dev/null 2>&1 || true
 
-    echo "==> Finished $ARCH"
+    echo "==> Finished $ABI_DIR ($ARCH)"
 }
 
 # --- Main Execution ---
 
 prepare_sources
 
-for TARGET in $TARGETS; do
-    build_arch "${TARGET#*:}" "${TARGET%%:*}"
+for ABI in $ABIS; do
+    build_arch "$ABI"
 done
 
 echo "=========================================="

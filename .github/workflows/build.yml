@@ -45,9 +45,9 @@ jobs:
       - name: Read ABIs
         id: abis
         run: |
-          # One build per ABI of config.yaml's abis, in the image and on the runner it says; the
+          # One build per ABI of config.yaml's android.abis, in the image and on the runner it says; the
           # 64-bit ones are checked for 16 KB pages (32-bit ABIs never run with them)
-          echo "matrix=$(yq -o=json -I=0 '[.abis | to_entries[] | {"abi": .key, "arch": .value.termux,
+          echo "matrix=$(yq -o=json -I=0 '[.android.abis | to_entries[] | {"abi": .key, "arch": .value.termux_arch,
             "runner": .value.runner, "check_16k": (.key | test("64"))}]' config.yaml)" >> $GITHUB_OUTPUT
 
       - name: Calculate Next Version
@@ -68,11 +68,20 @@ jobs:
           echo "version=$NEW_TAG" >> $GITHUB_OUTPUT
 
   # ------------------------------------------------------------------
-  # JOB 2: Build (Parallel)
+  # JOB 2: PRoot and its loaders, and the sources (config.yaml's: OpenJDK 8's JRE), in parallel
+  # ------------------------------------------------------------------
+  proot:
+    uses: ./.github/workflows/build-proot.yml
+
+  openjdk8:
+    uses: ./.github/workflows/build-openjdk8.yml
+
+  # ------------------------------------------------------------------
+  # JOB 3: The rootfs, an ABI each (parallel), once the sources it puts in (as their parts) are built
   # ------------------------------------------------------------------
   build:
     name: Build ${{ matrix.arch }}
-    needs: prepare
+    needs: [prepare, openjdk8]
     # Every image runs natively: x86 ones on x86_64 runners, ARM ones on ARM runners
     runs-on: ${{ matrix.runner }}
     strategy:
@@ -84,6 +93,12 @@ jobs:
       - name: Checkout
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
 
+      - name: Download Built Sources
+        uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
+        with:
+          name: openjdk8-${{ matrix.abi }}
+          path: built/openjdk8
+
       - name: Build Rootfs
         env:
           IMAGE: termux/termux-docker:${{ matrix.arch }}
@@ -92,8 +107,12 @@ jobs:
           ABI: ${{ matrix.abi }}
         run: |
           mkdir -p "out/$ARCH" manifests
-          # Only the parts built for this ABI (a part's abis; all of them without)
-          CONFIG=$(yq -o=json -I=0 '.packages |= with_entries(select((.value.abis // [strenv(ABI)]) | any_c(. == strenv(ABI))))' config.yaml)
+          # What rootfs/build.sh builds (as its packages and build_packages): config.yaml's rootfs parts
+          # of Termux's packages (not those built here, put in below) built for this ABI (a part's abis;
+          # all of them without)
+          CONFIG=$(yq -o=json -I=0 '{"packages": (.rootfs.parts | with_entries(select(.value.source == null))
+            | with_entries(select((.value.abis // [strenv(ABI)]) | any_c(. == strenv(ABI))))),
+            "build_packages": .rootfs.build_packages}' config.yaml)
 
           # Privileged: ARM images need personality(), even on ARM hosts (see termux-docker's README)
           docker run --privileged --name rootfs -v "$PWD/rootfs:/build:ro" "$IMAGE" \
@@ -103,6 +122,22 @@ jobs:
           docker cp "rootfs:$HOME_DIR/rootfs" stage
           docker cp "rootfs:$HOME_DIR/out/." manifests
           docker rm rootfs
+
+          # The parts built here (a part's source, e.g. jdk8's openjdk8: build-openjdk8.yml), their files as that build
+          # made them: listed for the app to delete them again (as build.sh lists the others'), with what
+          # they hold
+          for p in $(yq -r '.rootfs.parts | to_entries[] | select(.value.source) | .key' config.yaml); do
+            src=$(yq -r ".rootfs.parts.$p.source" config.yaml)
+            mkdir -p "stage/$p" "built/$src/out"
+            tar -xf "built/$src/$src-$ABI.tar" -C "built/$src/out"
+            cp -a "built/$src/out/$ABI/." "stage/$p/"
+            mkdir -p "stage/$p/etc/extensions"
+            (cd "stage/$p" && find . \( -type f -o -type l \) -print | sed 's|^\./||' | sort) > "$p.files"
+            mv "$p.files" "stage/$p/etc/extensions/$p.files"
+            info="built/$src/out/info-$ABI.json"
+            jq -r '"\(.name)-\(.version)"' "$info" > "manifests/manifest-$p.txt"
+            jq -r '"\(.name) \(.version)"' "$info" > "manifests/components-$p.txt"
+          done
 
           # One archive per part: the core and an extension per package (see config.yaml), packed
           # side by side (rootfs/pack.sh)
@@ -154,13 +189,7 @@ jobs:
           path: out/
 
   # ------------------------------------------------------------------
-  # JOB 2b: PRoot and its loaders (alongside the rootfs)
-  # ------------------------------------------------------------------
-  proot:
-    uses: ./.github/workflows/build-proot.yml
-
-  # ------------------------------------------------------------------
-  # JOB 3: Release & Compare
+  # JOB 4: Release & Compare
   # ------------------------------------------------------------------
   release:
     needs: [prepare, build, proot]
@@ -211,9 +240,9 @@ jobs:
           # One per part: what all ABIs have as it is, what differs (e.g. Termux's repo not synced
           # for all of them yet) with its ABI, e.g. "python-3.13.7 @arm". A part built for some ABIs
           # only (its abis) over those
-          ALL_ARCHES=$(yq -r '.abis[].termux' config.yaml)
+          ALL_ARCHES=$(yq -r '.android.abis[].termux_arch' config.yaml)
           mkdir -p manifests
-          for part in $(yq -r '.packages | keys[]' config.yaml); do
+          for part in $(yq -r '.rootfs.parts | keys[]' config.yaml); do
             ARCHES=$(for arch in $ALL_ARCHES; do
               if [ -f "current_assets/manifest-$part-$arch.txt" ]; then echo "$arch"; fi
             done)
@@ -371,6 +400,7 @@ jobs:
               ## Automated Build ${{ needs.prepare.outputs.version }}
               Base: [Termux packages](https://github.com/termux/termux-packages)
               PRoot (with the core): [`termux/proot@${{ steps.proot.outputs.ref }}`](https://github.com/termux/proot/tree/${{ steps.proot.outputs.ref }}), talloc `${{ steps.proot.outputs.talloc }}` (statically linked), with its loaders; NDK ${{ steps.proot.outputs.ndk }}${{ steps.proot.outputs.changed == 'true' && ' 🆕' || '' }}
+              OpenJDK 8 (jdk8): built from [`openjdk/jdk8u`](https://github.com/openjdk/jdk8u) (armeabi-v7a: its AArch32 port) with [PojavLauncher's patches](https://github.com/PojavLauncherTeam/android-openjdk-build-multiarch), as config.yaml's sources.openjdk8 pins them
               ABIs: ${{ join(fromJSON(needs.prepare.outputs.matrix).*.abi, ', ') }}
               
               ${{ steps.changelog.outputs.full_log }}
