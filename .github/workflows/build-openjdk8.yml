@@ -6,8 +6,6 @@ name: Build OpenJDK 8
 on:
   workflow_call:
   workflow_dispatch:
-  push: # TEMPORARY: building it on its branch, before it goes to main
-    branches: [jdk8, jdk8-clang]
 
 permissions:
   contents: read
