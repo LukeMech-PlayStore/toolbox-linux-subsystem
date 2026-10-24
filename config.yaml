@@ -29,7 +29,7 @@ proot:
   # A tag, branch, commit, or latest (newest tag); the loaders come from the same source
   repo: termux/proot
   ref: latest
-  talloc: latest # Statically linked; latest: newest release on samba.org
+  talloc: latest # Statically linked; latest: newest Samba tags
 
 # ------------------------------------------------------------------------------------------------
 # rootfs: the Linux subsystem (rootfs/build.sh, in termux-docker), as a tree of parts

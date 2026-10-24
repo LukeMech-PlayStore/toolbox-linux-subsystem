@@ -22,9 +22,10 @@ if [ "$PROOT_REF" = latest ]; then
     PROOT_REF=$(git ls-remote --tags --refs --sort=-v:refname "https://github.com/${PROOT_REPO}" | head -n1 | sed 's|.*refs/tags/||')
     [ -n "$PROOT_REF" ] || { echo "Error: no tags in ${PROOT_REPO}" >&2; exit 1; }
 fi
+# (talloc's from Samba's GitHub mirror, which tags each release: samba.org is often down)
 if [ "$TALLOC_VERSION" = latest ]; then
-    TALLOC_VERSION=$(curl -fsSL https://www.samba.org/ftp/talloc/ | grep -oE 'talloc-[0-9]+\.[0-9]+\.[0-9]+\.tar\.gz' \
-        | sed 's/^talloc-//; s/\.tar\.gz$//' | sort -uV | tail -n1)
+    TALLOC_VERSION=$(git ls-remote --tags --refs https://github.com/samba-team/samba 'talloc-*' \
+        | sed 's|.*refs/tags/talloc-||' | grep -E '^[0-9]+\.[0-9]+\.[0-9]+$' | sort -uV | tail -n1)
     [ -n "$TALLOC_VERSION" ] || { echo "Error: no talloc release found" >&2; exit 1; }
 fi
 if [ "${1:-}" = --versions ]; then
@@ -58,7 +59,12 @@ prepare_sources() {
     # 1. Download Talloc
     if [ ! -d "$SRC_DIR/talloc-$TALLOC_VERSION" ]; then
         echo " -> Downloading Talloc $TALLOC_VERSION..."
-        curl -L -f -o "$SRC_DIR/talloc.tar.gz" "https://www.samba.org/ftp/talloc/talloc-$TALLOC_VERSION.tar.gz"
+        # Gentoo's mirrors keep Samba's tarball as it is (in a folder named by its name's BLAKE2b),
+        # and are up when samba.org isn't; samba.org's if they haven't it yet
+        local f="talloc-$TALLOC_VERSION.tar.gz" h
+        h=$(printf %s "$f" | b2sum | cut -c1-2)
+        curl -fL --connect-timeout 15 --max-time 300 -o "$SRC_DIR/talloc.tar.gz" "https://distfiles.gentoo.org/distfiles/$h/$f" \
+            || curl -fL --connect-timeout 15 --max-time 300 --retry 3 -o "$SRC_DIR/talloc.tar.gz" "https://www.samba.org/ftp/talloc/$f"
         tar -xzf "$SRC_DIR/talloc.tar.gz" -C "$SRC_DIR"
         rm "$SRC_DIR/talloc.tar.gz"
     fi
