@@ -12,10 +12,12 @@ proot_cfg() {
     fi
     echo "$value"
 }
-TALLOC_VERSION=$(proot_cfg talloc)
 PROOT_REPO=$(proot_cfg repo)
-PROOT_REF=$(proot_cfg ref)
-# "latest": PRoot's newest tag, talloc's newest release (each build takes what's new, as the rootfs does)
+# The versions resolved before (PROOT_REF, TALLOC_VERSION: build.yml's, which decided to build), else
+# config's. "latest": PRoot's newest tag, talloc's newest release (each build takes what's new, as the
+# rootfs does). With --versions, only print them (ref=..., talloc=...)
+PROOT_REF="${PROOT_REF:-$(proot_cfg ref)}"
+TALLOC_VERSION="${TALLOC_VERSION:-$(proot_cfg talloc)}"
 if [ "$PROOT_REF" = latest ]; then
     PROOT_REF=$(git ls-remote --tags --refs --sort=-v:refname "https://github.com/${PROOT_REPO}" | head -n1 | sed 's|.*refs/tags/||')
     [ -n "$PROOT_REF" ] || { echo "Error: no tags in ${PROOT_REPO}" >&2; exit 1; }
@@ -24,6 +26,10 @@ if [ "$TALLOC_VERSION" = latest ]; then
     TALLOC_VERSION=$(curl -fsSL https://www.samba.org/ftp/talloc/ | grep -oE 'talloc-[0-9]+\.[0-9]+\.[0-9]+\.tar\.gz' \
         | sed 's/^talloc-//; s/\.tar\.gz$//' | sort -uV | tail -n1)
     [ -n "$TALLOC_VERSION" ] || { echo "Error: no talloc release found" >&2; exit 1; }
+fi
+if [ "${1:-}" = --versions ]; then
+    printf 'ref=%s\ntalloc=%s\n' "$PROOT_REF" "$TALLOC_VERSION"
+    exit 0
 fi
 echo "PRoot ${PROOT_REPO}@${PROOT_REF}, talloc ${TALLOC_VERSION}"
 # What was built, for the release notes (build-proot.yml)

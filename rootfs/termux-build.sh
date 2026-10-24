@@ -4,7 +4,8 @@
 # checksum, its patches, its configure step), natively in termux-docker and linked for 16 KB pages,
 # and installs it into <dest> (DESTDIR: <dest>$PREFIX/...). The recipe's configure options listed
 # are left out as configure is called (e.g. FFmpeg's --enable-libaom). Run by build.sh (rebuilt
-# packages, see config.yaml) and rebuild-16k.sh, with WORK exported.
+# packages, see config.yaml) and rebuild-16k.sh, with WORK exported (and REBUILT_CACHE, REBUILT_OUT:
+# what was built before of the same is taken as it was, see below).
 set -euo pipefail
 
 package=$1 dest=$2
@@ -82,8 +83,33 @@ termux_error_exit() { echo "::error::$package's recipe: $*"; exit 1; }
 source "$recipe/build.sh"
 
 # Its build tools, as its recipe lists them
-deps=$(echo "${TERMUX_PKG_BUILD_DEPENDS:-}" | tr ',' '\n' | sed 's/([^)]*)//; s/|.*//; s/ //g' | grep . || true)
+names() { echo "$1" | tr ',' '\n' | sed 's/([^)]*)//; s/|.*//; s/ //g' | grep . || true; }
+deps=$(names "${TERMUX_PKG_BUILD_DEPENDS:-}")
 [ -z "$deps" ] || apt-get install -y $deps
+
+# Built before of the same, it's taken as it was (REBUILT_CACHE: the previous release's, <key>.tar):
+# this script, the package and what's dropped, its recipe and Termux's build properties, and the
+# versions of what it builds against and links (a library's new version is a new build). Built or
+# taken, it's kept in REBUILT_OUT for the next release (build.sh)
+key=$({
+  sha256sum "$0" | cut -d' ' -f1
+  echo "$package $TERMUX_ARCH"; printf '%s\n' "${DROP[@]}"
+  git -C "$REPO" rev-parse "HEAD:packages/$package" "HEAD:scripts/properties.sh"
+  # shellcheck disable=SC2046
+  dpkg-query -W -f='${Package} ${Version}\n' $deps $(names "${TERMUX_PKG_DEPENDS:-}") 2>/dev/null | sort || true
+} | sha256sum | cut -d' ' -f1)
+keep_built() {
+  [ -n "${REBUILT_OUT:-}" ] || return 0
+  mkdir -p "$REBUILT_OUT"
+  if [ -f "$1" ]; then cp "$1" "$REBUILT_OUT/$key.tar"; else tar -cf "$REBUILT_OUT/$key.tar" -C "$dest" .; fi
+}
+if [ -n "${REBUILT_CACHE:-}" ] && [ -f "$REBUILT_CACHE/$key.tar" ]; then
+  mkdir -p "$dest"
+  tar -xf "$REBUILT_CACHE/$key.tar" -C "$dest"
+  keep_built "$REBUILT_CACHE/$key.tar"
+  echo "$package: built before of the same ($key), taken from the previous release"
+  exit 0
+fi
 
 rm -rf "$src" "$build"
 mkdir -p "$src" "$build"
@@ -158,3 +184,4 @@ fi
 if declare -F termux_step_post_massage > /dev/null; then
   TERMUX_PKG_MASSAGEDIR=$dest termux_step_post_massage
 fi
+keep_built

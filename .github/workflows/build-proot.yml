@@ -5,6 +5,15 @@ name: Build PRoot
 # just builds them (an artifact to look at, no release)
 on:
   workflow_call:
+    inputs:
+      ref:
+        description: The PRoot ref to build ("latest" resolved; empty: config.yaml's)
+        type: string
+        default: ''
+      talloc:
+        description: The talloc version to build (empty: config.yaml's)
+        type: string
+        default: ''
     outputs:
       proot_ref:
         description: The PRoot ref built (config.yaml's, "latest" resolved)
@@ -47,6 +56,8 @@ jobs:
         id: proot
         env:
           ANDROID_NDK_HOME: ${{ steps.setup-ndk.outputs.ndk-path }}
+          PROOT_REF: ${{ inputs.ref }}
+          TALLOC_VERSION: ${{ inputs.talloc }}
         run: |
           cd proot
           chmod +x build.sh

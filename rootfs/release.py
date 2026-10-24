@@ -4,6 +4,14 @@
       After an ABI's parts are compressed: prints, per part, its size unpacked and as an archive
       and what it holds (components-<part>.txt from build.sh), as JSON.
 
+  release.py proot-key <proot.json>
+      What decides PRoot's build (see merge), as JSON: build.yml builds it anew only when the previous
+      release's core was built of something else.
+
+  release.py source-key <config.json> <source>
+      What decides a source's build (its config section and files, ndk.sh, its workflow): build.yml
+      builds it anew only when the previous release's parts.json ("sources") has another key.
+
   release.py merge <tag> <config.json> <current dir> <manifests dir> <previous dir> <out dir> <proot dir> <proot.json>
       Each part gets a fingerprint: what goes into it (its merged manifest, its config entry and
       script, the settings and build scripts every part shares). A part whose fingerprint the
@@ -21,9 +29,10 @@
       <config.json>: config.yaml as JSON (android.abis, rootfs.parts). <current dir>: <arch>/<lib> and
       sizes-<arch>.json of this build (arch: the abi's termux name). <previous dir>: the previous
       release's parts.json and its archives in <abi>/<lib> (both may be missing: then all is new).
-      <proot dir>: this build's PRoot, <abi>/lib*.so (build-proot.yml). <proot.json>: what it was
-      built of, {"ref", "talloc", "ndk"}.
-      Writes <out dir>/<abi>/<lib>, <out dir>/parts.json (the release's, for the next one),
+      <proot dir>: this build's PRoot, <abi>/libproot*.so (build-proot.yml, or the previous release's).
+      <proot.json>: what it was built of, {"ref", "talloc", "ndk", "api"}.
+      Writes <out dir>/<abi>/<lib>, <out dir>/parts.json (the release's, for the next one, with the
+      sources' keys),
       <out dir>/<abi>/libparts.json.so (the app's: that ABI's alone, without the hashes) and
       <out dir>/changed.txt (the parts with a new version, one per line).
 """
@@ -86,7 +95,7 @@ def read_file(path):
 
 
 def proot_of(info_path):
-    """What PRoot is built of: its and talloc's versions, the NDK, and its build scripts and patches."""
+    """What PRoot is built of: its and talloc's versions, the NDK and API, its build scripts and patches."""
     with open(info_path, encoding="utf-8") as f:
         info = json.load(f)
     h = hashlib.sha256()
@@ -95,12 +104,28 @@ def proot_of(info_path):
         h.update(f"\0{name}\0".encode() + read_file(os.path.join(PROOT_SRC, name)))
     # The NDK's setup, everything cross-compiled here has it (ndk.sh)
     h.update(b"\0ndk.sh\0" + read_file(NDK_SETUP))
-    return {"ref": info["ref"], "talloc": info["talloc"], "ndk": info["ndk"], "build": h.hexdigest()}
+    return {"ref": info["ref"], "talloc": info["talloc"], "ndk": info["ndk"], "api": info.get("api"),
+            "build": h.hexdigest()}
 
 
 def proot_libs(proot_dir, abi):
     """PRoot and its loaders as built for an ABI (libproot.so, libproot-loader*.so)."""
-    return sorted(n for n in os.listdir(os.path.join(proot_dir, abi)) if n.startswith("lib") and n.endswith(".so"))
+    return sorted(n for n in os.listdir(os.path.join(proot_dir, abi)) if n.startswith("libproot") and n.endswith(".so"))
+
+
+def source_key(config, source):
+    """What a source part is built of: its config section (with its NDK and API), its build's files, the
+    NDK's setup and its workflow."""
+    h = hashlib.sha256()
+    h.update(json.dumps((config.get("sources") or {}).get(source), sort_keys=True).encode())
+    folder = os.path.join(HERE, source)
+    files = sorted(os.path.relpath(os.path.join(root, n), folder).replace(os.sep, "/")
+                   for root, _, names in os.walk(folder) for n in names)
+    for name in files:
+        h.update(f"\0{source}/{name}\0".encode() + read_file(os.path.join(folder, name)))
+    h.update(b"\0ndk.sh\0" + read_file(NDK_SETUP))
+    h.update(b"\0workflow\0" + read_file(os.path.join(HERE, "..", ".github", "workflows", f"build-{source}.yml")))
+    return h.hexdigest()
 
 
 def rootfs_parts(config):
@@ -122,15 +147,8 @@ def fingerprint(part, config, manifest, proot=None):
     if proot:
         h.update(b"\0proot\0" + json.dumps(proot, sort_keys=True).encode())
     if source:
-        # Built here: of its config section (with its NDK and API) and its build's files, not Termux's
-        # build scripts
-        built_with = {"source": (config.get("sources") or {}).get(source)}
-        h.update(b"\0source\0" + json.dumps(built_with, sort_keys=True).encode())
-        folder = os.path.join(HERE, source)
-        files = sorted(os.path.relpath(os.path.join(root, n), folder).replace(os.sep, "/")
-                       for root, _, names in os.walk(folder) for n in names)
-        for name in files:
-            h.update(f"\0{source}/{name}\0".encode() + read_file(os.path.join(folder, name)))
+        # Built here: of what its build is (source_key), not Termux's build scripts
+        h.update(b"\0source\0" + source_key(config, source).encode())
         return h.hexdigest()
     for script in SHARED_SCRIPTS + ([entry["script"]] if entry and entry.get("script") else []):
         h.update(f"\0{script}\0".encode() + read_file(os.path.join(HERE, script)))
@@ -269,8 +287,10 @@ def merge(tag, config_path, current, manifests, previous, out, proot_dir, proot_
         entry["lib"] = lib
         index[part] = entry
 
+    # The sources' keys: the next build builds a source anew only when its key changed
+    sources = {name: source_key(config, name) for name in (config.get("sources") or {})}
     with open(os.path.join(out, "parts.json"), "w", encoding="utf-8") as f:
-        json.dump({"release": tag, "parts": index}, f, indent=2)
+        json.dump({"release": tag, "parts": index, "sources": sources}, f, indent=2)
         f.write("\n")
     # The app's: per ABI, next to its archives (a native library, so each device gets only its own),
     # just what the app reads of each part
@@ -290,6 +310,15 @@ def merge(tag, config_path, current, manifests, previous, out, proot_dir, proot_
         f.write("".join(f"{p}\n" for p in changed))
 
 
+def proot_key(info_path):
+    print(json.dumps(proot_of(info_path), sort_keys=True))
+
+
+def source_key_of(config_path, source):
+    with open(config_path, encoding="utf-8") as f:
+        print(source_key(json.load(f), source))
+
+
 if __name__ == "__main__":
     command, *args = sys.argv[1:]
-    {"sizes": sizes, "merge": merge}[command](*args)
+    {"sizes": sizes, "merge": merge, "proot-key": proot_key, "source-key": source_key_of}[command](*args)

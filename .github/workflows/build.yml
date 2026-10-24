@@ -18,6 +18,10 @@ on:
         description: "Force release even if no changes?"
         type: boolean
         default: false
+      rebuild_all:
+        description: "Build PRoot, the sources and the rebuilt packages anew, even if built before of the same?"
+        type: boolean
+        default: false
 
 permissions:
   contents: write
@@ -36,6 +40,12 @@ jobs:
     outputs:
       version: ${{ steps.calc_ver.outputs.version }}
       matrix: ${{ steps.abis.outputs.matrix }}
+      abis: ${{ steps.abis.outputs.abis }}
+      previous: ${{ steps.plan.outputs.previous }}
+      proot_ref: ${{ steps.plan.outputs.ref }}
+      talloc: ${{ steps.plan.outputs.talloc }}
+      build_proot: ${{ steps.plan.outputs.build_proot }}
+      build_openjdk8: ${{ steps.plan.outputs.build_openjdk8 }}
     steps:
       - name: Checkout
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
@@ -49,6 +59,51 @@ jobs:
           # 64-bit ones are checked for 16 KB pages (32-bit ABIs never run with them)
           echo "matrix=$(yq -o=json -I=0 '[.android.abis | to_entries[] | {"abi": .key, "arch": .value.termux_arch,
             "runner": .value.runner, "check_16k": (.key | test("64"))}]' config.yaml)" >> $GITHUB_OUTPUT
+          echo "abis=$(yq -o=json -I=0 '[.android.abis | keys[]]' config.yaml)" >> $GITHUB_OUTPUT
+
+      - name: What to Build
+        id: plan
+        env:
+          GH_TOKEN: ${{ github.token }}
+          REBUILD_ALL: ${{ inputs.rebuild_all }}
+        run: |
+          # PRoot and the sources are built anew only when what they're built of changed since the
+          # latest release (its parts.json: the core's PRoot, the sources' keys; rootfs/release.py), or
+          # for other ABIs; else they're that release's (the reuse jobs)
+          PREVIOUS=$(gh release list --limit 1 --exclude-drafts --exclude-pre-releases --json tagName \
+            --jq '.[0].tagName // empty' || true)
+          echo "previous=$PREVIOUS" >> $GITHUB_OUTPUT
+          mkdir -p prev
+          [ -n "$PREVIOUS" ] && gh release download "$PREVIOUS" -p parts.json -D prev || echo '{}' > prev/parts.json
+          yq -o=json '.' config.yaml > config.json
+          ABIS=$(yq -o=json -I=0 '[.android.abis | keys[]] | sort' config.yaml)
+          same_abis() { [ "$(jq -c --arg p "$1" '[.parts[$p].abis // {} | keys[]] | sort' prev/parts.json)" = "$ABIS" ]; }
+
+          # PRoot: its versions resolved now ("latest"), built of those only
+          VERSIONS=$(bash proot/build.sh --versions)
+          echo "$VERSIONS" >> $GITHUB_OUTPUT
+          jq -n --arg ref "$(sed -n 's/^ref=//p' <<< "$VERSIONS")" --arg talloc "$(sed -n 's/^talloc=//p' <<< "$VERSIONS")" \
+            --arg ndk "$(yq -r '.proot.ndk' config.yaml)" --arg api "$(yq -r '.proot.api' config.yaml)" \
+            '{ref: $ref, talloc: $talloc, ndk: $ndk, api: $api}' > proot.json
+          NEW=$(python3 rootfs/release.py proot-key proot.json | jq -S -c .)
+          OLD=$(jq -S -c '.parts.core.proot // empty' prev/parts.json)
+          if [ "$REBUILD_ALL" != true ] && [ "$NEW" = "$OLD" ] && same_abis core; then
+            echo "build_proot=false" >> $GITHUB_OUTPUT
+            echo "::notice::PRoot: as in $PREVIOUS ($NEW)"
+          else
+            echo "build_proot=true" >> $GITHUB_OUTPUT
+          fi
+
+          # OpenJDK 8 (the part made of it, jdk8)
+          PART=$(yq -r '.rootfs.parts | to_entries[] | select(.value.source == "openjdk8") | .key' config.yaml)
+          NEW=$(python3 rootfs/release.py source-key config.json openjdk8)
+          OLD=$(jq -r '.sources.openjdk8 // empty' prev/parts.json)
+          if [ "$REBUILD_ALL" != true ] && [ "$NEW" = "$OLD" ] && same_abis "$PART"; then
+            echo "build_openjdk8=false" >> $GITHUB_OUTPUT
+            echo "::notice::OpenJDK 8: as in $PREVIOUS ($NEW)"
+          else
+            echo "build_openjdk8=true" >> $GITHUB_OUTPUT
+          fi
 
       - name: Calculate Next Version
         id: calc_ver
@@ -70,18 +125,93 @@ jobs:
   # ------------------------------------------------------------------
   # JOB 2: PRoot and its loaders, and the sources (config.yaml's: OpenJDK 8's JRE), in parallel
   # ------------------------------------------------------------------
+  # Each built anew only when what it's built of changed (prepare); else the reuse jobs below give the
+  # same artifacts, of the latest release
   proot:
+    needs: prepare
+    if: needs.prepare.outputs.build_proot == 'true'
     uses: ./.github/workflows/build-proot.yml
+    with:
+      ref: ${{ needs.prepare.outputs.proot_ref }}
+      talloc: ${{ needs.prepare.outputs.talloc }}
 
   openjdk8:
+    needs: prepare
+    if: needs.prepare.outputs.build_openjdk8 == 'true'
     uses: ./.github/workflows/build-openjdk8.yml
+
+  reuse-proot:
+    name: PRoot of ${{ needs.prepare.outputs.previous }}
+    needs: prepare
+    if: needs.prepare.outputs.build_proot == 'false'
+    runs-on: ubuntu-latest
+    steps:
+      - name: Take PRoot
+        env:
+          GH_TOKEN: ${{ github.token }}
+          PREVIOUS: ${{ needs.prepare.outputs.previous }}
+          ABIS: ${{ needs.prepare.outputs.abis }}
+        run: |
+          # The latest release's (with its core), per ABI as build-proot.yml makes it
+          gh release download "$PREVIOUS" -R "$GITHUB_REPOSITORY" -p rootfs.tar.gz
+          mkdir proot
+          tar -xzf rootfs.tar.gz -C proot --wildcards $(jq -r '.[] | "./\(.)/libproot*.so"' <<< "$ABIS")
+          ls -R proot
+
+      - name: Upload Artifacts
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          name: proot
+          path: proot/
+
+  reuse-openjdk8:
+    name: OpenJDK 8 of ${{ needs.prepare.outputs.previous }} (${{ matrix.abi }})
+    needs: prepare
+    if: needs.prepare.outputs.build_openjdk8 == 'false'
+    runs-on: ubuntu-latest
+    strategy:
+      matrix:
+        abi: ${{ fromJSON(needs.prepare.outputs.abis) }}
+    steps:
+      - name: Checkout
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+
+      - name: Take OpenJDK 8
+        env:
+          GH_TOKEN: ${{ github.token }}
+          PREVIOUS: ${{ needs.prepare.outputs.previous }}
+          ABI: ${{ matrix.abi }}
+        run: |
+          # The latest release's part of it, as build-openjdk8.yml's artifact: its files (without the
+          # list the rootfs build adds) and what it is (the part's first component: "name version")
+          PART=$(yq -r '.rootfs.parts | to_entries[] | select(.value.source == "openjdk8") | .key' config.yaml)
+          gh release download "$PREVIOUS" -p rootfs.tar.gz -p parts.json
+          tar -xzf rootfs.tar.gz "./$ABI/libpackage-$PART.tar.xz.so"
+          mkdir -p "out/$ABI"
+          tar -xpJf "$ABI/libpackage-$PART.tar.xz.so" -C "out/$ABI"
+          rm -rf "out/$ABI/etc/extensions"
+          rmdir "out/$ABI/etc" 2>/dev/null || true
+          jq --arg p "$PART" --arg abi "$ABI" '.parts[$p].abis[$abi].components[0] | split(" ")
+            | {name: .[0], version: .[1]}' parts.json > "out/info-$ABI.json"
+          cat "out/info-$ABI.json"
+          tar -cf "openjdk8-$ABI.tar" -C out "./$ABI" "./info-$ABI.json"
+
+      - name: Upload Artifacts
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          name: openjdk8-${{ matrix.abi }}
+          path: openjdk8-${{ matrix.abi }}.tar
 
   # ------------------------------------------------------------------
   # JOB 3: The rootfs, an ABI each (parallel), once the sources it puts in (as their parts) are built
   # ------------------------------------------------------------------
   build:
     name: Build ${{ matrix.arch }}
-    needs: [prepare, openjdk8]
+    needs: [prepare, openjdk8, reuse-openjdk8]
+    # Once OpenJDK 8 is there, built or reused (one of them is skipped)
+    if: >-
+      !cancelled() && needs.prepare.result == 'success'
+      && (needs.openjdk8.result == 'success' || needs.reuse-openjdk8.result == 'success')
     # Every image runs natively: x86 ones on x86_64 runners, ARM ones on ARM runners
     runs-on: ${{ matrix.runner }}
     strategy:
@@ -99,6 +229,22 @@ jobs:
           name: openjdk8-${{ matrix.abi }}
           path: built/openjdk8
 
+      - name: Rebuilt Before
+        env:
+          GH_TOKEN: ${{ github.token }}
+          PREVIOUS: ${{ needs.prepare.outputs.previous }}
+          REBUILD_ALL: ${{ inputs.rebuild_all }}
+        run: |
+          # What the latest release's build built with Termux's recipes (rebuilt packages, 16 KB
+          # rebuilds), each as <key>.tar: termux-build.sh takes what's built of the same again
+          mkdir -p rebuilt-cache
+          if [ -n "$PREVIOUS" ] && [ "$REBUILD_ALL" != true ] \
+            && gh release download "$PREVIOUS" -R "$GITHUB_REPOSITORY" -p "rebuilt-${{ matrix.arch }}.tar"; then
+            tar -xf "rebuilt-${{ matrix.arch }}.tar" -C rebuilt-cache
+            rm "rebuilt-${{ matrix.arch }}.tar"
+          fi
+          ls -la rebuilt-cache
+
       - name: Build Rootfs
         env:
           IMAGE: termux/termux-docker:${{ matrix.arch }}
@@ -115,13 +261,17 @@ jobs:
             "build_packages": .rootfs.build_packages}' config.yaml)
 
           # Privileged: ARM images need personality(), even on ARM hosts (see termux-docker's README)
-          docker run --privileged --name rootfs -v "$PWD/rootfs:/build:ro" "$IMAGE" \
-            bash /build/build.sh "$IMAGE_VERSION" "$CONFIG"
+          docker run --privileged --name rootfs -v "$PWD/rootfs:/build:ro" -v "$PWD/rebuilt-cache:/rebuilt:ro" "$IMAGE" \
+            bash /build/build.sh "$IMAGE_VERSION" "$CONFIG" /rebuilt
 
           HOME_DIR=/data/data/com.termux/files/home
           docker cp "rootfs:$HOME_DIR/rootfs" stage
           docker cp "rootfs:$HOME_DIR/out/." manifests
           docker rm rootfs
+          # What it built with Termux's recipes (or took again), for the next release
+          mkdir -p manifests/rebuilt
+          tar -cf "out/rebuilt-$ARCH.tar" -C manifests/rebuilt .
+          rm -rf manifests/rebuilt
 
           # The parts built here (a part's source, e.g. jdk8's openjdk8: build-openjdk8.yml), their files as that build
           # made them: listed for the app to delete them again (as build.sh lists the others'), with what
@@ -192,7 +342,11 @@ jobs:
   # JOB 4: Release & Compare
   # ------------------------------------------------------------------
   release:
-    needs: [prepare, build, proot]
+    needs: [prepare, build, proot, reuse-proot]
+    # Once PRoot is there, built or reused (one of them is skipped)
+    if: >-
+      !cancelled() && needs.build.result == 'success'
+      && (needs.proot.result == 'success' || needs.reuse-proot.result == 'success')
     runs-on: ubuntu-latest
     steps:
 
@@ -267,9 +421,8 @@ jobs:
 
       - name: Pick Parts
         env:
-          PROOT_REF: ${{ needs.proot.outputs.proot_ref }}
-          TALLOC_VERSION: ${{ needs.proot.outputs.talloc_version }}
-          NDK_VERSION: ${{ needs.proot.outputs.ndk_version }}
+          PROOT_REF: ${{ needs.prepare.outputs.proot_ref }}
+          TALLOC_VERSION: ${{ needs.prepare.outputs.talloc }}
         run: |
           # A part keeps the previous release's archive and version unless what goes into it
           # changed (rootfs/release.py); final_package gets every ABI's archives and its own parts list
@@ -277,8 +430,9 @@ jobs:
           # PRoot ships with the core: a new PRoot or talloc version (or NDK, or proot/ script or
           # patch) is a new core, with this build's PRoot; else the core keeps the previous one's
           yq -o=json '.' config.yaml > config.json
-          jq -n --arg ref "$PROOT_REF" --arg talloc "$TALLOC_VERSION" --arg ndk "$NDK_VERSION" \
-            '{ref: $ref, talloc: $talloc, ndk: $ndk}' > proot.json
+          jq -n --arg ref "$PROOT_REF" --arg talloc "$TALLOC_VERSION" \
+            --arg ndk "$(yq -r '.proot.ndk' config.yaml)" --arg api "$(yq -r '.proot.api' config.yaml)" \
+            '{ref: $ref, talloc: $talloc, ndk: $ndk, api: $api}' > proot.json
           python3 rootfs/release.py merge "${{ needs.prepare.outputs.version }}" config.json \
             current_assets manifests prev_package final_package proot_out proot.json
           mv final_package/changed.txt changed.txt
@@ -410,8 +564,10 @@ jobs:
               ABIs: ${{ join(fromJSON(needs.prepare.outputs.matrix).*.abi, ', ') }}
               
               ${{ steps.changelog.outputs.full_log }}
+          # rebuilt-<arch>.tar: what its builds built with Termux's recipes, which the next one takes again
           files: |
             rootfs.tar.gz
             parts.json
             manifests/manifest-*.txt
+            current_assets/rebuilt-*.tar
           make_latest: true

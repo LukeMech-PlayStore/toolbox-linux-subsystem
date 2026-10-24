@@ -1,19 +1,23 @@
 #!/data/data/com.termux/files/usr/bin/bash
 # Runs inside termux/termux-docker (as its "system" user):
-#   bash build.sh <image version> <config.yaml as JSON>
+#   bash build.sh <image version> <config.yaml as JSON> [<rebuilt cache>]
 # Installs everything config.yaml asks for and leaves the rootfs parts in ~/rootfs/<part> (core
 # and the others), each holding only its packages' files (with their dependencies, minus what
 # the parts it builds on have, and minus what its packages don't use of them) and what pip added
 # for it - not the rest of the Termux bootstrap (apt, bash, ...), nor the build packages. The
 # Termux prefix goes to usr/; the app binds it back to $PREFIX inside proot.
 # Manifests and components (what the app tells a part holds), one of each per part, go to ~/out.
+# Packages built here (termux-build.sh) built before of the same are taken from <rebuilt cache> (the
+# previous release's, <key>.tar); what was built or taken goes to ~/out/rebuilt, for the next release.
 set -euo pipefail
 
 IMAGE_VERSION=$1
 CONFIG=$2
+export REBUILT_CACHE="${3:-}"
 
 ROOT="$HOME/rootfs"
 OUT="$HOME/out"
+export REBUILT_OUT="$OUT/rebuilt"
 WORK="$HOME/work"
 HERE=$(dirname "$(readlink -f "$0")")
 mkdir -p "$ROOT" "$OUT" "$WORK"
