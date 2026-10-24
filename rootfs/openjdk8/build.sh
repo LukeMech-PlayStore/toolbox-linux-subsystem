@@ -90,7 +90,7 @@ git -C openjdk fetch -q --depth 1 "https://github.com/$REPO" "$SRC_REF"
 git -C openjdk -c advice.detachedHead=false checkout -q FETCH_HEAD
 # patches/ by where they apply: common/ to every ABI, then the source's (repo/, repo_arm/, as config
 # names them), then the ABI's own, by the NDK's name of it (arm64/, x86/): numbered in that order
-# (common/ 01-09, repo/ 10s, repo_arm/ 20s, the ABI's 30s).
+# (common/ 01-09, the source's 10s, the ABI's 20s).
 # As PojavLauncher applies its own (the android.patch ones): what no longer fits (a newer update) is
 # left out, and said
 for dir in common "$SRC" "$NDK_ARCH"; do
