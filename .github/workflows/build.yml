@@ -452,19 +452,17 @@ jobs:
             current_assets manifests prev_package final_package proot_out proot.json
           mv final_package/changed.txt changed.txt
           mv final_package/parts.json parts.json
+          # PRoot (the one shipped) in the core's manifest, a package as the rest (after merge: its
+          # fingerprint has PRoot apart); "5.1.107.101_talloc-2.5.0", as the app lists it
+          jq -r '.parts.core.proot | "proot-\(.ref | ltrimstr("v"))_talloc-\(.talloc)"' parts.json >> manifests/manifest-core.txt
+          sort -o manifests/manifest-core.txt manifests/manifest-core.txt
 
       - name: Read PRoot
         id: proot
         run: |
           # The PRoot shipped (Pick Parts put it in each ABI's jniLibs folder with the core): this
           # build's with a new core, else the previous release's
-          jq -r '.parts.core.proot | "ref=\(.ref)", "talloc=\(.talloc)", "ndk=\(.ndk)"' parts.json >> $GITHUB_OUTPUT
-          if grep -qx core changed.txt && \
-            [ "$(jq -c '.parts.core.proot' parts.json)" != "$(jq -c '.parts.core.proot' prev_package/parts.json 2>/dev/null)" ]; then
-            echo "changed=true" >> $GITHUB_OUTPUT
-          else
-            echo "changed=false" >> $GITHUB_OUTPUT
-          fi
+          jq -r '.parts.core.proot | "ref=\(.ref)", "talloc=\(.talloc)", "ndk=\(.ndk)", "api=\(.api)"' parts.json >> $GITHUB_OUTPUT
 
       - name: OpenJDK 8's sources
         id: openjdk8
@@ -473,7 +471,8 @@ jobs:
           REF_ARM: ${{ needs.prepare.outputs.openjdk8_ref_arm }}
         run: |
           # OpenJDK's tag, and its AArch32 port's (armeabi-v7a), as prepare resolved them
-          yq -r '.sources.openjdk8 | "repo=\(.repo)", "repo_arm=\(.repo_arm)"' config.yaml >> $GITHUB_OUTPUT
+          # Parenthesised: yq's pipe binds tighter than its comma (the rest read from the root: null)
+          yq -r '.sources.openjdk8 | ("repo=\(.repo)", "repo_arm=\(.repo_arm)", "ndk=\(.ndk)", "api=\(.api)")' config.yaml >> $GITHUB_OUTPUT
           { echo "ref=$REF"; echo "ref_arm=$REF_ARM"; } >> $GITHUB_OUTPUT
 
       - name: Generate Changelog
@@ -578,8 +577,8 @@ jobs:
           body: |
               ## Automated Build ${{ needs.prepare.outputs.version }}
               Base: [Termux packages](https://github.com/termux/termux-packages)
-              PRoot (with the core): [`termux/proot@${{ steps.proot.outputs.ref }}`](https://github.com/termux/proot/tree/${{ steps.proot.outputs.ref }}), talloc `${{ steps.proot.outputs.talloc }}` (statically linked), with its loaders; NDK ${{ steps.proot.outputs.ndk }}${{ steps.proot.outputs.changed == 'true' && ' 🆕' || '' }}
-              OpenJDK 8 (jdk8): built from [`${{ steps.openjdk8.outputs.repo }}@${{ steps.openjdk8.outputs.ref }}`](https://github.com/${{ steps.openjdk8.outputs.repo }}/tree/${{ steps.openjdk8.outputs.ref }}) (armeabi-v7a: its AArch32 port, [`${{ steps.openjdk8.outputs.repo_arm }}@${{ steps.openjdk8.outputs.ref_arm }}`](https://github.com/${{ steps.openjdk8.outputs.repo_arm }}/tree/${{ steps.openjdk8.outputs.ref_arm }})) with [PojavLauncher's patches](https://github.com/PojavLauncherTeam/android-openjdk-build-multiarch) and this repository's ([`rootfs/openjdk8/patches`](https://github.com/${{ github.repository }}/tree/${{ github.sha }}/rootfs/openjdk8/patches))
+              PRoot: [`termux/proot@${{ steps.proot.outputs.ref }}`](https://github.com/termux/proot/tree/${{ steps.proot.outputs.ref }}), talloc `${{ steps.proot.outputs.talloc }}`; NDK ${{ steps.proot.outputs.ndk }}, min API ${{ steps.proot.outputs.api }}
+              OpenJDK 8: [`${{ steps.openjdk8.outputs.repo }}@${{ steps.openjdk8.outputs.ref }}`](https://github.com/${{ steps.openjdk8.outputs.repo }}/tree/${{ steps.openjdk8.outputs.ref }}), armeabi-v7a: [`${{ steps.openjdk8.outputs.repo_arm }}@${{ steps.openjdk8.outputs.ref_arm }}`](https://github.com/${{ steps.openjdk8.outputs.repo_arm }}/tree/${{ steps.openjdk8.outputs.ref_arm }}); NDK ${{ steps.openjdk8.outputs.ndk }}, min API ${{ steps.openjdk8.outputs.api }}
               ABIs: ${{ join(fromJSON(needs.prepare.outputs.matrix).*.abi, ', ') }}
               
               ${{ steps.changelog.outputs.full_log }}
