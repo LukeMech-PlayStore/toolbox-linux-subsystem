@@ -59,14 +59,19 @@ prepare_sources() {
     # 1. Download Talloc
     if [ ! -d "$SRC_DIR/talloc-$TALLOC_VERSION" ]; then
         echo " -> Downloading Talloc $TALLOC_VERSION..."
-        # Gentoo's mirrors keep Samba's tarball as it is (in a folder named by its name's BLAKE2b),
-        # and are up when samba.org isn't; samba.org's if they haven't it yet
-        local f="talloc-$TALLOC_VERSION.tar.gz" h
-        h=$(printf %s "$f" | b2sum | cut -c1-2)
-        curl -fL --connect-timeout 15 --max-time 300 -o "$SRC_DIR/talloc.tar.gz" "https://distfiles.gentoo.org/distfiles/$h/$f" \
-            || curl -fL --connect-timeout 15 --max-time 300 --retry 3 -o "$SRC_DIR/talloc.tar.gz" "https://www.samba.org/ftp/talloc/$f"
-        tar -xzf "$SRC_DIR/talloc.tar.gz" -C "$SRC_DIR"
-        rm "$SRC_DIR/talloc.tar.gz"
+        # From Samba's GitHub mirror (samba.org is often down), at its tag: what its release tarball
+        # holds (lib/talloc/wscript's DIST_DIRS), laid out as it is
+        local git="$SRC_DIR/samba" dir="$SRC_DIR/talloc-$TALLOC_VERSION"
+        rm -rf "$git"
+        git -c advice.detachedHead=false clone -q --depth 1 --filter=blob:none --sparse -b "talloc-$TALLOC_VERSION" \
+            https://github.com/samba-team/samba "$git"
+        git -C "$git" sparse-checkout set lib/talloc lib/replace buildtools third_party/waf
+        mkdir -p "$dir/lib" "$dir/third_party"
+        cp -a "$git/lib/talloc/." "$dir/"
+        cp -a "$git/lib/replace" "$dir/lib/"
+        cp -a "$git/buildtools" "$dir/"
+        cp -a "$git/third_party/waf" "$dir/third_party/"
+        rm -rf "$git"
     fi
 
     # 2. Download Proot (tarball, so there is no .git for its version check to pick up)
