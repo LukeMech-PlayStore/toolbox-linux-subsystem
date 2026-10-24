@@ -26,10 +26,11 @@ on:
 permissions:
   contents: write
 
-# One at a time (queued, never cancelled): each release's tag and parts build on the one before
+# One at a time: each release's tag and parts build on the one before. A newer run cancels the one
+# going (what it would release is out of date)
 concurrency:
   group: build
-  cancel-in-progress: false
+  cancel-in-progress: true
 
 jobs:
   # ------------------------------------------------------------------

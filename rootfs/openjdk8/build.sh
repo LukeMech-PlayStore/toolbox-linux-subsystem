@@ -42,6 +42,13 @@ DEVKIT_NAME="Android $NDK_ARCH"
 DEVKIT_TOOLCHAIN_PATH="\$DEVKIT_ROOT/$NDK_TRIPLE/bin"
 DEVKIT_SYSROOT="\$DEVKIT_ROOT/sysroot"
 EOF
+# Linked for 16 KB pages (as the app's every native lib; r10e's x86_64 linker takes 4 KB), whatever links:
+# HotSpot's makefiles have their own flags
+for ld in "$TOOLCHAIN/$NDK_TRIPLE/bin/ld" "$TOOLCHAIN/bin/$NDK_TRIPLE-ld"; do
+    [ -e "$ld.real" ] || mv "$ld" "$ld.real"
+    printf '#!/bin/sh\nexec "%s.real" -z max-page-size=16384 "$@"\n' "$ld" > "$ld"
+    chmod 755 "$ld"
+done
 
 # Each ABI as OpenJDK's build and its lib/ folder name it, and its source (config's repo, or repo_arm:
 # the AArch32 port, with its own triple). 32-bit ones get HotSpot's client VM (as PojavLauncher's)
@@ -125,7 +132,7 @@ LIB="$JRE/lib/$LIB_ARCH"
 $CC -shared -fPIC -O2 -Wl,-z,max-page-size=16384 -Wl,-soname,libtagfix.so -o "$LIB/libtagfix.so" "$HERE/libtagfix.c"
 echo > "$WORK/empty.c"
 $CC -shared -fPIC -Wl,-z,max-page-size=16384 -Wl,-soname,librt.so -Wl,--no-as-needed -o "$LIB/librt.so" "$WORK/empty.c" -lc
-patchelf --add-needed libtagfix.so "$JRE/bin/java"
+patchelf --page-size 16384 --add-needed libtagfix.so "$JRE/bin/java"
 # Stripped, and without the DT_RPATH OpenJDK gives them (bionic ignores it, warning each run: java-8
 # finds its libraries)
 find "$JRE" -type f \( -name '*.so' -o -path '*/bin/*' \) -exec sh -c 'head -c4 "$1" | grep -q ELF' sh {} \; -print0 \
