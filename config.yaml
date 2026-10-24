@@ -188,9 +188,9 @@ sources:
     # The last NDK with GCC, as PojavLauncher's (clang 13+ miscompiles HotSpot 8); its newest API level
     ndk: r10e
     api: 21
-    # Pinned: the patches fit this tag, so both change together
+    # latest: the newest release (jdk8u<N>-ga); or a tag
     repo: openjdk/jdk8u
-    ref: jdk8u512-b07
-    # armeabi-v7a: OpenJDK's AArch32 port, at the same version
+    ref: latest
+    # armeabi-v7a: OpenJDK's AArch32 port; latest: its newest tag of that release
     repo_arm: openjdk/aarch32-port-jdk8u
-    ref_arm: jdk8u512-b07-aarch32-20261009
+    ref_arm: latest

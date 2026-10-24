@@ -5,6 +5,15 @@ name: Build OpenJDK 8
 # Run by hand, it just builds it (an artifact per ABI, no release)
 on:
   workflow_call:
+    inputs:
+      ref:
+        description: "OpenJDK's tag, resolved (config's \"latest\": build.yml's prepare)"
+        type: string
+        required: false
+      ref_arm:
+        description: "The AArch32 port's tag, resolved"
+        type: string
+        required: false
   workflow_dispatch:
 
 permissions:
@@ -64,6 +73,8 @@ jobs:
       - name: Build
         env:
           ANDROID_NDK_HOME: ${{ steps.setup-ndk.outputs.ndk-path }}
+          OPENJDK8_REF: ${{ inputs.ref }}
+          OPENJDK8_REF_ARM: ${{ inputs.ref_arm }}
         run: bash rootfs/openjdk8/build.sh "${{ matrix.abi }}"
 
       - name: Pack

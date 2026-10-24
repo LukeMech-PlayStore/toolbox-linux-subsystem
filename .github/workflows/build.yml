@@ -47,6 +47,8 @@ jobs:
       talloc: ${{ steps.plan.outputs.talloc }}
       build_proot: ${{ steps.plan.outputs.build_proot }}
       build_openjdk8: ${{ steps.plan.outputs.build_openjdk8 }}
+      openjdk8_ref: ${{ steps.plan.outputs.openjdk8_ref }}
+      openjdk8_ref_arm: ${{ steps.plan.outputs.openjdk8_ref_arm }}
     steps:
       - name: Checkout
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
@@ -95,7 +97,12 @@ jobs:
             echo "build_proot=true" >> $GITHUB_OUTPUT
           fi
 
-          # OpenJDK 8 (the part made of it, jdk8)
+          # OpenJDK 8 (the part made of it, jdk8): its tags resolved now ("latest"), built of those only
+          VERSIONS=$(bash rootfs/openjdk8/build.sh --versions)
+          sed 's/^/openjdk8_/' <<< "$VERSIONS" >> $GITHUB_OUTPUT
+          jq --arg ref "$(sed -n 's/^ref=//p' <<< "$VERSIONS")" --arg ref_arm "$(sed -n 's/^ref_arm=//p' <<< "$VERSIONS")" \
+            '.sources.openjdk8.ref = $ref | .sources.openjdk8.ref_arm = $ref_arm' config.json > config.resolved.json
+          mv config.resolved.json config.json
           PART=$(yq -r '.rootfs.parts | to_entries[] | select(.value.source == "openjdk8") | .key' config.yaml)
           NEW=$(python3 rootfs/release.py source-key config.json openjdk8)
           OLD=$(jq -r '.sources.openjdk8 // empty' prev/parts.json)
@@ -140,6 +147,9 @@ jobs:
     needs: prepare
     if: needs.prepare.outputs.build_openjdk8 == 'true'
     uses: ./.github/workflows/build-openjdk8.yml
+    with:
+      ref: ${{ needs.prepare.outputs.openjdk8_ref }}
+      ref_arm: ${{ needs.prepare.outputs.openjdk8_ref_arm }}
 
   reuse-proot:
     name: PRoot of ${{ needs.prepare.outputs.previous }}
@@ -424,13 +434,17 @@ jobs:
         env:
           PROOT_REF: ${{ needs.prepare.outputs.proot_ref }}
           TALLOC_VERSION: ${{ needs.prepare.outputs.talloc }}
+          OPENJDK8_REF: ${{ needs.prepare.outputs.openjdk8_ref }}
+          OPENJDK8_REF_ARM: ${{ needs.prepare.outputs.openjdk8_ref_arm }}
         run: |
           # A part keeps the previous release's archive and version unless what goes into it
           # changed (rootfs/release.py); final_package gets every ABI's archives and its own parts list
           # (libparts.json.so, the app's); parts.json, of them all, is a release asset of its own (for the next one).
           # PRoot ships with the core: a new PRoot or talloc version (or NDK, or proot/ script or
           # patch) is a new core, with this build's PRoot; else the core keeps the previous one's
-          yq -o=json '.' config.yaml > config.json
+          # (OpenJDK 8's tags as prepare resolved them: what its key was of)
+          yq -o=json '.' config.yaml | jq --arg ref "$OPENJDK8_REF" --arg ref_arm "$OPENJDK8_REF_ARM" \
+            '.sources.openjdk8.ref = $ref | .sources.openjdk8.ref_arm = $ref_arm' > config.json
           jq -n --arg ref "$PROOT_REF" --arg talloc "$TALLOC_VERSION" \
             --arg ndk "$(yq -r '.proot.ndk' config.yaml)" --arg api "$(yq -r '.proot.api' config.yaml)" \
             '{ref: $ref, talloc: $talloc, ndk: $ndk, api: $api}' > proot.json
@@ -454,9 +468,13 @@ jobs:
 
       - name: OpenJDK 8's sources
         id: openjdk8
+        env:
+          REF: ${{ needs.prepare.outputs.openjdk8_ref }}
+          REF_ARM: ${{ needs.prepare.outputs.openjdk8_ref_arm }}
         run: |
-          # What config.yaml's sources.openjdk8 pins: OpenJDK's tag, and its AArch32 port's (armeabi-v7a)
-          yq -r '.sources.openjdk8 | "repo=\(.repo)", "ref=\(.ref)", "repo_arm=\(.repo_arm)", "ref_arm=\(.ref_arm)"' config.yaml >> $GITHUB_OUTPUT
+          # OpenJDK's tag, and its AArch32 port's (armeabi-v7a), as prepare resolved them
+          yq -r '.sources.openjdk8 | "repo=\(.repo)", "repo_arm=\(.repo_arm)"' config.yaml >> $GITHUB_OUTPUT
+          { echo "ref=$REF"; echo "ref_arm=$REF_ARM"; } >> $GITHUB_OUTPUT
 
       - name: Generate Changelog
         id: changelog

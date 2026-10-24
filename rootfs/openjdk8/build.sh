@@ -6,6 +6,7 @@
 # of. Runs on Linux x86_64 (build-openjdk8.yml; by hand too, see README.md).
 #
 # usage: build.sh <abi>   (a name of config.yaml's android.abis)
+#        build.sh --versions   (only print the tags it builds: ref=..., ref_arm=...)
 # BOOT_JDK: a JDK 8 to build with (JAVA_HOME's, else PATH's); the NDK as ndk.sh finds it
 set -euo pipefail
 
@@ -25,6 +26,25 @@ cfg() {
     fi
     echo "$value"
 }
+
+# Its tags: config's, or the ones resolved before (OPENJDK8_REF, OPENJDK8_REF_ARM: build.yml's, which
+# decided to build). "latest": OpenJDK's newest release (jdk8u<N>-ga), and its AArch32 port's newest tag of it
+REF="${OPENJDK8_REF:-$(cfg ref)}"
+if [ "$REF" = latest ]; then
+    REF=$(git ls-remote --tags --refs "https://github.com/$(cfg repo)" 'jdk8u*-ga' | sed 's|.*refs/tags/||' \
+        | grep -E '^jdk8u[0-9]+-ga$' | sort -V | tail -n1)
+    [ -n "$REF" ] || { echo "Error: no release (jdk8u<N>-ga) in $(cfg repo)" >&2; exit 1; }
+fi
+REF_ARM="${OPENJDK8_REF_ARM:-$(cfg ref_arm)}"
+if [ "$REF_ARM" = latest ]; then
+    REF_ARM=$(git ls-remote --tags --refs "https://github.com/$(cfg repo_arm)" "$REF-aarch32-*" | sed 's|.*refs/tags/||' \
+        | sort -V | tail -n1)
+    [ -n "$REF_ARM" ] || { echo "Error: no $REF-aarch32-* in $(cfg repo_arm)" >&2; exit 1; }
+fi
+if [ "$ABI" = --versions ]; then
+    printf 'ref=%s\nref_arm=%s\n' "$REF" "$REF_ARM"
+    exit 0
+fi
 
 # The NDK (config.yaml's sources.openjdk8: r10e, the last with GCC, as PojavLauncher's; HotSpot 8 isn't
 # C++ that clang 13+ compiles right: it takes `this` as aligned, which markOop's isn't), a standalone
@@ -59,15 +79,18 @@ case "$NDK_ARCH" in
     x86_64) TARGET=$NDK_TRIPLE;               JDK_CPU=x86_64;  LIB_ARCH=amd64;   VM=server; SRC=repo ;;
 esac
 REPO=$(cfg "$SRC")
-SRC_REF=$(cfg "${SRC/repo/ref}")
+if [ "$SRC" = repo ]; then SRC_REF=$REF; else SRC_REF=$REF_ARM; fi
 echo "OpenJDK $REPO@$SRC_REF for $ABI ($TARGET, $VM VM)"
 cd "$WORK"
 
-# The source at its tag, and the patches for it
+# The source at its tag (fetched, not cloned with -b, which warns of annotated tags), and the patches for it
 rm -rf openjdk
-git clone -q --depth 1 -b "$SRC_REF" "https://github.com/$REPO" openjdk
+git init -q openjdk
+git -C openjdk fetch -q --depth 1 "https://github.com/$REPO" "$SRC_REF"
+git -C openjdk -c advice.detachedHead=false checkout -q FETCH_HEAD
 # patches/ by where they apply: common/ to every ABI, then the source's (repo/, repo_arm/, as config
-# names them), then the ABI's own, by the NDK's name of it (arm64/, x86/), each folder's in name order.
+# names them), then the ABI's own, by the NDK's name of it (arm64/, x86/): numbered in that order
+# (common/ 01-09, repo/ 10s, repo_arm/ 20s, the ABI's 30s).
 # As PojavLauncher applies its own (the android.patch ones): what no longer fits (a newer update) is
 # left out, and said
 for dir in common "$SRC" "$NDK_ARCH"; do
@@ -90,11 +113,20 @@ for lib in pthread thread_db; do [ -f "dummy_libs/lib$lib.a" ] || ar cru "dummy_
 boot=()
 BOOT_JDK="${BOOT_JDK:-${JAVA_HOME:-}}"
 [ -n "$BOOT_JDK" ] && boot=(--with-boot-jdk="$BOOT_JDK")
-# Its version as the tag's (jdk8u512-b07: java -version says 1.8.0_512-b07, as a release's, not
-# -internal and b00)
+# java -version as the release's (1.8.0_504-b01, not -internal and b00): its update and build, of
+# OpenJDK's tag (the AArch32 port's is of the same). A -ga one is its last build's commit
 version=()
-if [[ $SRC_REF =~ ^jdk8u([0-9]+)-b([0-9]+) ]]; then
-    version=(--with-update-version="${BASH_REMATCH[1]}" --with-build-number="b${BASH_REMATCH[2]}" --with-milestone=fcs)
+UPDATE=$(sed -nE 's/^jdk8u([0-9]+)-.*/\1/p' <<< "$REF")
+BUILD=$(sed -nE 's/^jdk8u[0-9]+-(b[0-9]+).*/\1/p' <<< "$REF")
+if [ -n "$UPDATE" ] && [ -z "$BUILD" ]; then
+    # Each tag and its commit (an annotated tag's line, then its commit's: ^{})
+    tags=$(git ls-remote --tags "https://github.com/$(cfg repo)" "jdk8u$UPDATE-*" | sed 's|refs/tags/||; s|\^{}$||' \
+        | awk '{ c[$2] = $1 } END { for (t in c) print c[t], t }')
+    commit=$(awk -v t="$REF" '$2 == t { print $1 }' <<< "$tags")
+    BUILD=$(awk -v c="$commit" '$1 == c { print $2 }' <<< "$tags" | sed -nE 's/^jdk8u[0-9]+-(b[0-9]+)$/\1/p' | sort -V | tail -n1)
+fi
+if [ -n "$UPDATE" ] && [ -n "$BUILD" ]; then
+    version=(--with-update-version="$UPDATE" --with-build-number="$BUILD" --with-milestone=fcs)
 fi
 cd openjdk
 bash ./configure \
@@ -157,9 +189,8 @@ exec "\$J/bin/java" "\$@"
 EOF
 chmod 755 "$OUT/usr/bin/java-8"
 
-# What it was built of: what the app lists it holds (rootfs/release.py), as its tag names it (8u512-b07:
-# the release file's 1.8.0_512 hasn't the build)
-VERSION=${SRC_REF#jdk}
+# What it was built of: what the app lists it holds (rootfs/release.py)
+VERSION=$(sed -n 's/^JAVA_VERSION="\(.*\)"/\1/p' "$JRE/release")
 jq -n --arg name openjdk8-jre --arg src "$REPO@$SRC_REF" --arg ndk "$(cfg ndk)" --arg api "$ANDROID_API" --arg version "$VERSION" \
     '{name: $name, source: $src, ndk: $ndk, api: $api, version: $version}' > "$OUT/../info-$ABI.json"
 echo "Built OpenJDK $VERSION ($SRC_REF) for $ABI: $(du -sh "$OUT" | cut -f1)"
