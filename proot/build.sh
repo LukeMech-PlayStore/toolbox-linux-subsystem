@@ -60,12 +60,15 @@ prepare_sources() {
     if [ ! -d "$SRC_DIR/talloc-$TALLOC_VERSION" ]; then
         echo " -> Downloading Talloc $TALLOC_VERSION..."
         # From Samba's GitHub mirror (samba.org is often down), at its tag: what its release tarball
-        # holds (lib/talloc/wscript's DIST_DIRS), laid out as it is
+        # holds (lib/talloc/wscript's DIST_DIRS), laid out as it is. Fetched, not cloned with -b: the tag
+        # is an annotated one, which a shallow clone warns of
         local git="$SRC_DIR/samba" dir="$SRC_DIR/talloc-$TALLOC_VERSION"
         rm -rf "$git"
-        git -c advice.detachedHead=false clone -q --depth 1 --filter=blob:none --sparse -b "talloc-$TALLOC_VERSION" \
-            https://github.com/samba-team/samba "$git"
+        git init -q "$git"
         git -C "$git" sparse-checkout set lib/talloc lib/replace buildtools third_party/waf
+        git -C "$git" fetch -q --depth 1 --filter=blob:none https://github.com/samba-team/samba \
+            "refs/tags/talloc-$TALLOC_VERSION"
+        git -C "$git" -c advice.detachedHead=false checkout -q FETCH_HEAD
         mkdir -p "$dir/lib" "$dir/third_party"
         cp -a "$git/lib/talloc/." "$dir/"
         cp -a "$git/lib/replace" "$dir/lib/"
