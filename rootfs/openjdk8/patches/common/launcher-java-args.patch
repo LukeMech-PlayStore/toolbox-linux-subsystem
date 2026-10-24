@@ -1,0 +1,32 @@
+diff --git a/jdk/src/share/bin/defines.h b/jdk/src/share/bin/defines.h
+index 8b00af17..dbc6632f 100644
+--- a/jdk/src/share/bin/defines.h
++++ b/jdk/src/share/bin/defines.h
+@@ -48,6 +48,7 @@
+ #ifdef JAVA_ARGS
+ static const char* const_progname = "java";
+ static const char* const_jargs[] = JAVA_ARGS;
++#define HAS_JAVA_ARGS JNI_TRUE
+ /*
+  * ApplicationHome is prepended to each of these entries; the resulting
+  * strings are concatenated (separated by PATH_SEPARATOR) and used as the
+@@ -64,6 +65,7 @@ static const char* const_progname = PROGNAME;
+ static char* const_progname = NULL;
+ #endif
+ static const char** const_jargs = NULL;
++#define HAS_JAVA_ARGS JNI_FALSE
+ static const char** const_appclasspath = NULL;
+ #endif /* JAVA_ARGS */
+ 
+diff --git a/jdk/src/share/bin/main.c b/jdk/src/share/bin/main.c
+index 677eb696..e1f918d3 100644
+--- a/jdk/src/share/bin/main.c
++++ b/jdk/src/share/bin/main.c
+@@ -129,6 +129,6 @@ main(int argc, char **argv)
+                    DOT_VERSION,
+                    (const_progname != NULL) ? const_progname : *margv,
+                    (const_launcher != NULL) ? const_launcher : *margv,
+-                   (const_jargs != NULL) ? JNI_TRUE : JNI_FALSE,
++                   HAS_JAVA_ARGS,
+                    const_cpwildcard, const_javaw, const_ergo_class);
+ }

@@ -12,31 +12,6 @@ index 1aab2b3..f38997f 100644
  	# First accept the basic system types.
  	# The portable systems comes first.
  	# Each alternative MUST END IN A *, to match a version number.
-diff --git a/common/autoconf/build-aux/config.sub b/common/autoconf/build-aux/config.sub
-index cc958da..162e27c 100644
---- a/common/autoconf/build-aux/config.sub
-+++ b/common/autoconf/build-aux/config.sub
-@@ -30,7 +30,8 @@
- DIR=`dirname $0`
- 
- # First, filter out everything that doesn't begin with "aarch64-"
--if ! echo $* | grep '^aarch64-' >/dev/null ; then
-+# or the mobile platforms (ios and android)
-+if ! echo $* | egrep "^aarch64-|-android" >/dev/null ; then
-     . $DIR/autoconf-config.sub "$@"
-     # autoconf-config.sub exits, so we never reach here, but just in
-     # case we do:
-@@ -41,6 +42,10 @@ while test $# -gt 0 ; do
-     case $1 in 
-         -- )   # Stop option processing
-             shift; break ;;
-+        *-android* )
-+            echo $1
-+            exit
-+            ;;
-         aarch64-* )
-             config=`echo $1 | sed 's/^aarch64-/arm-/'`
-             sub_args="$sub_args $config"
 diff --git a/common/autoconf/generated-configure.sh b/common/autoconf/generated-configure.sh
 index 344c316..0043b76 100644
 --- a/common/autoconf/generated-configure.sh
@@ -65,16 +40,6 @@ index 344c316..0043b76 100644
      *darwin*)
        VAR_OS=macosx
        VAR_OS_API=posix
-@@ -14870,7 +14880,8 @@ $as_echo "$with_jvm_variants" >&6; }
- 
- 
- 
--  INCLUDE_SA=true
-+  # Android: no serviceability agent (its Linux side is glibc's)
-+  INCLUDE_SA=false
-   if test "x$JVM_VARIANT_ZERO" = xtrue ; then
-     INCLUDE_SA=false
-   fi
 diff --git a/common/autoconf/platform.m4 b/common/autoconf/platform.m4
 index 99c7820..add9c40 100644
 --- a/common/autoconf/platform.m4
@@ -59217,20 +59182,6 @@ index ec41463..47dded2 100644
 +# Android: no serviceability agent (its Linux side is glibc's)
 +# EXPORT_LIST += $(ADD_SA_BINARIES/$(HS_ARCH))
  
- 
-diff --git a/hotspot/make/linux/makefiles/saproc.make b/hotspot/make/linux/makefiles/saproc.make
-index ffc0ec5..beaff9f 100644
---- a/hotspot/make/linux/makefiles/saproc.make
-+++ b/hotspot/make/linux/makefiles/saproc.make
-@@ -69,7 +69,8 @@ endif
- 
- ifneq ($(wildcard $(AGENT_DIR)),)
- ifneq ($(filter-out ia64 zero,$(SRCARCH)),)
--  BUILDLIBSAPROC = $(LIBSAPROC)
-+  # Android: no serviceability agent (its Linux side is glibc's)
-+  # BUILDLIBSAPROC = $(LIBSAPROC)
- endif
- endif
  
 diff --git a/hotspot/make/linux/makefiles/vm.make b/hotspot/make/linux/makefiles/vm.make
 index 982f13a..0629ba7 100644

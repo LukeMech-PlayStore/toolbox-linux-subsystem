@@ -297,6 +297,12 @@ jobs:
             echo "changed=false" >> $GITHUB_OUTPUT
           fi
 
+      - name: OpenJDK 8's sources
+        id: openjdk8
+        run: |
+          # What config.yaml's sources.openjdk8 pins: OpenJDK's tag, and its AArch32 port's (armeabi-v7a)
+          yq -r '.sources.openjdk8 | "repo=\(.repo)", "ref=\(.ref)", "repo_arm=\(.repo_arm)", "ref_arm=\(.ref_arm)"' config.yaml >> $GITHUB_OUTPUT
+
       - name: Generate Changelog
         id: changelog
         run: |
@@ -400,7 +406,7 @@ jobs:
               ## Automated Build ${{ needs.prepare.outputs.version }}
               Base: [Termux packages](https://github.com/termux/termux-packages)
               PRoot (with the core): [`termux/proot@${{ steps.proot.outputs.ref }}`](https://github.com/termux/proot/tree/${{ steps.proot.outputs.ref }}), talloc `${{ steps.proot.outputs.talloc }}` (statically linked), with its loaders; NDK ${{ steps.proot.outputs.ndk }}${{ steps.proot.outputs.changed == 'true' && ' 🆕' || '' }}
-              OpenJDK 8 (jdk8): built from [`openjdk/jdk8u`](https://github.com/openjdk/jdk8u) (armeabi-v7a: its AArch32 port) with [PojavLauncher's patches](https://github.com/PojavLauncherTeam/android-openjdk-build-multiarch), as config.yaml's sources.openjdk8 pins them
+              OpenJDK 8 (jdk8): built from [`${{ steps.openjdk8.outputs.repo }}@${{ steps.openjdk8.outputs.ref }}`](https://github.com/${{ steps.openjdk8.outputs.repo }}/tree/${{ steps.openjdk8.outputs.ref }}) (armeabi-v7a: its AArch32 port, [`${{ steps.openjdk8.outputs.repo_arm }}@${{ steps.openjdk8.outputs.ref_arm }}`](https://github.com/${{ steps.openjdk8.outputs.repo_arm }}/tree/${{ steps.openjdk8.outputs.ref_arm }})) with [PojavLauncher's patches](https://github.com/PojavLauncherTeam/android-openjdk-build-multiarch) and this repository's ([`rootfs/openjdk8/patches`](https://github.com/${{ github.repository }}/tree/${{ github.sha }}/rootfs/openjdk8/patches))
               ABIs: ${{ join(fromJSON(needs.prepare.outputs.matrix).*.abi, ', ') }}
               
               ${{ steps.changelog.outputs.full_log }}

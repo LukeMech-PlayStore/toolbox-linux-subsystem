@@ -1,7 +1,7 @@
 #!/bin/bash
 # OpenJDK 8's JRE for one ABI (the jdk8 part): Termux has no Java older than 17, so it's built here
 # from OpenJDK's source (config.yaml's sources.openjdk8) with patches/ (PojavLauncher's for Android, and
-# what the update pinned needs), cross-compiled with the NDK's clang (ndk.sh). Into out/<abi>/: the part's
+# what the update pinned and the NDK's clang need), cross-compiled with the NDK's clang (ndk.sh). Into out/<abi>/: the part's
 # files (usr/, as the rootfs's), and out/info-<abi>.json: what it was built of. Runs on Linux x86_64
 # (build-openjdk8.yml; by hand too, see README.md).
 #
@@ -33,12 +33,12 @@ ndk_setup "$ABI"
 INCLUDE="$NDK_SYSROOT/usr/include"
 
 # Each ABI as OpenJDK's build and its lib/ folder name it. 32-bit ones get HotSpot's client VM (as
-# PojavLauncher's), ARM's from the AArch32 port (its own repository, tags and triple)
+# PojavLauncher's), ARM's from the AArch32 port (its own repository, tags, triple and patches/ folder)
 case "$NDK_ARCH" in
-    arm64)  TARGET=aarch64-linux-android;     JDK_CPU=aarch64; LIB_ARCH=aarch64; VM=server; REPO=$(cfg repo);     SRC_REF=$(cfg ref) ;;
-    arm)    TARGET=aarch32-linux-androideabi; JDK_CPU=aarch32; LIB_ARCH=aarch32; VM=client; REPO=$(cfg repo_arm); SRC_REF=$(cfg ref_arm) ;;
-    x86)    TARGET=i686-linux-android;        JDK_CPU=x86;     LIB_ARCH=i386;    VM=client; REPO=$(cfg repo);     SRC_REF=$(cfg ref) ;;
-    x86_64) TARGET=x86_64-linux-android;      JDK_CPU=x86_64;  LIB_ARCH=amd64;   VM=server; REPO=$(cfg repo);     SRC_REF=$(cfg ref) ;;
+    arm64)  TARGET=aarch64-linux-android;     JDK_CPU=aarch64; LIB_ARCH=aarch64; VM=server; REPO=$(cfg repo);     SRC_REF=$(cfg ref);     SRC=upstream ;;
+    arm)    TARGET=aarch32-linux-androideabi; JDK_CPU=aarch32; LIB_ARCH=aarch32; VM=client; REPO=$(cfg repo_arm); SRC_REF=$(cfg ref_arm); SRC=arm ;;
+    x86)    TARGET=i686-linux-android;        JDK_CPU=x86;     LIB_ARCH=i386;    VM=client; REPO=$(cfg repo);     SRC_REF=$(cfg ref);     SRC=upstream ;;
+    x86_64) TARGET=x86_64-linux-android;      JDK_CPU=x86_64;  LIB_ARCH=amd64;   VM=server; REPO=$(cfg repo);     SRC_REF=$(cfg ref);     SRC=upstream ;;
 esac
 echo "OpenJDK $REPO@$SRC_REF for $ABI ($TARGET, $VM VM)"
 
@@ -48,16 +48,16 @@ cd "$WORK"
 # The source at its tag, and the patches for it
 rm -rf openjdk
 git clone -q --depth 1 -b "$SRC_REF" "https://github.com/$REPO" openjdk
-apply_patch() {
-    # As PojavLauncher applies its own (jdk8-android*.patch: its buildjre8's jdk8u_android*.diff): what no
-    # longer fits upstream (a newer update) is left out, and said
-    git -C openjdk apply --reject --whitespace=fix "$HERE/patches/$1" || echo "::warning::$1: some hunks didn't apply"
-}
-apply_patch jdk8-android.patch
-if [ "$ABI" = armeabi-v7a ]; then apply_patch jdk8-android-aarch32.patch; else apply_patch jdk8-android-main.patch; fi
-if [ "$ABI" = x86 ]; then apply_patch jdk8-android-x86-page-trap.patch; fi
-# What the update pinned needs that they don't know: BitMap's ArrayAllocator instantiated where libjvm needs it
-patch -d openjdk -p1 --forward --fuzz=2 < "$HERE/patches/jdk8-bitmap-arrayallocator.patch"
+# patches/ by where they apply: common/ to every ABI, then the source's (upstream/: OpenJDK's jdk8u;
+# arm/: its AArch32 port, 32-bit ARM's), then the ABI's own (x86/), each folder's in name order. As
+# PojavLauncher applies its own (the android.patch ones): what no longer fits upstream (a newer update) is
+# left out, and said
+for dir in common "$SRC" "$ABI"; do
+    for p in "$HERE/patches/$dir"/*.patch; do
+        [ -e "$p" ] || continue
+        git -C openjdk apply --reject --whitespace=fix "$p" || echo "::warning::$dir/$(basename "$p"): some hunks didn't apply"
+    done
+done
 
 # What the build expects of a Linux system: X11's, Fontconfig's and ALSA's headers (the host's: configure
 # looks for them; the patches leave out what would use ALSA), and CUPS' (printing, which the JRE only

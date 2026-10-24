@@ -1,0 +1,100 @@
+diff --git a/hotspot/src/os/linux/vm/os_linux.cpp b/hotspot/src/os/linux/vm/os_linux.cpp
+index 2d3880b363..77eb2ac3fd 100644
+--- a/hotspot/src/os/linux/vm/os_linux.cpp
++++ b/hotspot/src/os/linux/vm/os_linux.cpp
+@@ -93,11 +95,17 @@
+ # include <semaphore.h>
+ # include <fcntl.h>
+ # include <string.h>
+-# include <syscall.h>
+ # include <sys/sysinfo.h>
++#ifndef __ANDROID__
+ # include <gnu/libc-version.h>
++#endif
+ # include <sys/ipc.h>
++#if !defined(__ANDROID__)
++# include <syscall.h>
+ # include <sys/shm.h>
++#else
++# include <sys/syscall.h>
++#endif
+ # include <link.h>
+ # include <stdint.h>
+ # include <inttypes.h>
+@@ -2977,7 +3048,11 @@ extern "C" JNIEXPORT int fork1() { return fork(); }
+ // Handle request to load libnuma symbol version 1.1 (API v1). If it fails
+ // load symbol from base version instead.
+ void* os::Linux::libnuma_dlsym(void* handle, const char *name) {
++#ifndef __ANDROID__
+   void *f = dlvsym(handle, name, "libnuma_1.1");
++#else
++  void *f = NULL;
++#endif
+   if (f == NULL) {
+     f = dlsym(handle, name);
+   }
+@@ -5867,7 +5978,11 @@ bool os::is_thread_cpu_time_supported() {
+ // Linux doesn't yet have a (official) notion of processor sets,
+ // so just return the system wide load average.
+ int os::loadavg(double loadavg[], int nelem) {
++#ifdef __ANDROID__
++  return -1;
++#else
+   return ::getloadavg(loadavg, nelem);
++#endif // !__ANDROID__
+ }
+ 
+ void os::pause() {
+diff --git a/common/autoconf/build-aux/config.sub b/common/autoconf/build-aux/config.sub
+index cc958da..162e27c 100644
+--- a/common/autoconf/build-aux/config.sub
++++ b/common/autoconf/build-aux/config.sub
+@@ -30,7 +30,8 @@
+ DIR=`dirname $0`
+ 
+ # First, filter out everything that doesn't begin with "aarch64-"
+-if ! echo $* | grep '^aarch64-' >/dev/null ; then
++# or the mobile platforms (ios and android)
++if ! echo $* | egrep "^aarch64-|-android" >/dev/null ; then
+     . $DIR/autoconf-config.sub "$@"
+     # autoconf-config.sub exits, so we never reach here, but just in
+     # case we do:
+@@ -41,6 +42,10 @@ while test $# -gt 0 ; do
+     case $1 in 
+         -- )   # Stop option processing
+             shift; break ;;
++        *-android* )
++            echo $1
++            exit
++            ;;
+         aarch64-* )
+             config=`echo $1 | sed 's/^aarch64-/arm-/'`
+             sub_args="$sub_args $config"
+diff --git a/common/autoconf/generated-configure.sh b/common/autoconf/generated-configure.sh
+index 344c316..0043b76 100644
+--- a/common/autoconf/generated-configure.sh
++++ b/common/autoconf/generated-configure.sh
+@@ -14880,7 +14880,8 @@ $as_echo "$with_jvm_variants" >&6; }
+ 
+ 
+ 
+-  INCLUDE_SA=true
++  # Android: no serviceability agent (its Linux side is glibc's)
++  INCLUDE_SA=false
+   if test "x$JVM_VARIANT_ZERO" = xtrue ; then
+     INCLUDE_SA=false
+   fi
+diff --git a/hotspot/make/linux/makefiles/saproc.make b/hotspot/make/linux/makefiles/saproc.make
+index ffc0ec5..beaff9f 100644
+--- a/hotspot/make/linux/makefiles/saproc.make
++++ b/hotspot/make/linux/makefiles/saproc.make
+@@ -69,7 +69,8 @@ endif
+ 
+ ifneq ($(wildcard $(AGENT_DIR)),)
+ ifneq ($(filter-out ia64 zero,$(SRCARCH)),)
+-  BUILDLIBSAPROC = $(LIBSAPROC)
++  # Android: no serviceability agent (its Linux side is glibc's)
++  # BUILDLIBSAPROC = $(LIBSAPROC)
+ endif
+ endif
+ 
