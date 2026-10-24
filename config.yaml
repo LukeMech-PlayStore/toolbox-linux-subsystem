@@ -1,21 +1,16 @@
-# What this repository builds and releases (build.yml: once a month, and with every change here), for
-# the app's Linux subsystem, in four sections:
-#
-#   android  What everything is built for: the app's ABIs
-#   proot    PRoot, which runs the rootfs (proot/build.sh; it ships with the rootfs's core), and its NDK
-#   rootfs   The rootfs, in parts the app installs as Play modules: what goes into each
-#   sources  What a rootfs part is built of here, not of Termux's packages (rootfs/<name>/build.sh)
+# What this repository builds for the app's Linux subsystem (build.yml: monthly, and on every change):
+#   android  the app's ABIs
+#   proot    PRoot (ships with the core)
+#   rootfs   the rootfs, in parts the app installs as Play modules
+#   sources  parts built here from source, not from Termux packages (rootfs/<name>/build.sh)
 
 
 # ------------------------------------------------------------------------------------------------
-# android: what everything is built for
+# android
 # ------------------------------------------------------------------------------------------------
 android:
-  # Every ABI Google Play supports (the app's jniLibs folders, a release's folders), with:
-  # - ndk_arch: the NDK's name for it (proot/ndk-setup.sh)
-  # - termux_arch: Termux's; the rootfs is built in termux/termux-docker:<this>
-  # - runner: the GitHub runner running that image natively (x86 ones on x86_64, ARM ones on ARM)
-  # The 64-bit ones are checked for 16 KB pages (32-bit ABIs never run with them)
+  # Every ABI Google Play supports, with its NDK name, its Termux name (termux-docker:<this>) and the
+  # runner building it natively. 64-bit ones are checked for 16 KB pages
   abis:
     arm64-v8a:   { ndk_arch: arm64,  termux_arch: aarch64, runner: ubuntu-24.04-arm }
     armeabi-v7a: { ndk_arch: arm,    termux_arch: arm,     runner: ubuntu-24.04-arm }
@@ -24,57 +19,40 @@ android:
 
 
 # ------------------------------------------------------------------------------------------------
-# proot: PRoot and its loaders (build-proot.yml, proot/build.sh), shipped with the rootfs's core
+# proot: PRoot and its loaders (proot/build.sh), shipped with the core
 # ------------------------------------------------------------------------------------------------
 proot:
-  # A tag, a branch name (master), a commit hash, or latest (its newest tag, as each build finds it);
-  # the loaders are built from the same source, so they always match
-  repo: termux/proot
-  ref: latest
-  talloc: latest # Statically linked; latest: its newest release on samba.org
-  # Compiled with this NDK's clang (ndk.sh), for this API level (Android 10, the app's oldest). The
-  # rootfs's Termux packages, and those rebuilt here, are Termux's own (its toolchain, its API level)
+  # NDK (clang, ndk.sh) and API level (Android 10, the app's oldest). Termux packages, rebuilt ones too,
+  # use Termux's own toolchain
   ndk: r30
   api: 29
-
+  # A tag, branch, commit, or latest (newest tag); the loaders come from the same source
+  repo: termux/proot
+  ref: latest
+  talloc: latest # Statically linked; latest: newest release on samba.org
 
 # ------------------------------------------------------------------------------------------------
 # rootfs: the Linux subsystem (rootfs/build.sh, in termux-docker), as a tree of parts
 # ------------------------------------------------------------------------------------------------
-# Each part ships in the app's jniLibs (libpackage-<name>.tar.xz.so, so Android unpacks it with the
-# app), installed from Play (with the pages of the tools on it), unpacked when a tool first needs it,
-# and deleted (its module uninstalled) once none does:
-# - core (with PRoot): what every other part builds on (dash, and what several parts link, e.g. Python's
-#   and FFmpeg's OpenSSL and zlib)
-# - the others: what tools run on
+# Each part ships as libpackage-<name>.tar.xz.so in a Play module, is unpacked when a tool first needs
+# it, and removed once none does. core (with PRoot) is what every other part builds on.
 #
-# A part says only what it is for; where its dependencies go follows from the tree:
-# - packages / pip: the Termux and pip packages it's for (its own programs, data and modules)
-# - requires: the parts it builds on (the core, or parts building on it), listed before it; the app
-#   installs those first, and lists them with it
-# - pip_libs: Termux libraries its pip packages are compiled against (installed before pip)
-# - pip_options: options for pip installing them
-# - rebuild: Termux packages built with Termux's recipe of them, without some of its configure
-#   options (rootfs/termux-build.sh): what they link of their dependencies follows
+# A part's keys:
+# - packages / pip: the Termux and pip packages it's for
+# - requires: parts it builds on, listed before it (the app installs those first)
+# - pip_libs: Termux libraries its pip packages compile against
+# - pip_options: options for pip
+# - rebuild: Termux packages rebuilt from Termux's recipe without some configure options
+#   (rootfs/termux-build.sh)
 # - exclude: dependencies to leave out (with what only they need)
-# - abis: the ABIs it's built for (android.abis' names), when not all of them: e.g. Termux doesn't
-#   build its package for one; the app leaves it (and its tools) out there. A part building on one
-#   that isn't built for an ABI isn't either (say so). A tool can run on several parts (the
-#   Minecraft server: a jdk and cloudflared), its pages a module of their own in the app
-# - script: run on the part's files once they're exported (rootfs/<script>, with STAGE: its folder)
-# - source: no Termux packages, but built here (a name of sources below), its files as that build
-#   makes them
-# Everything a part's packages use comes along, and only that: the libraries they link, the
-# interpreters their scripts run, the data those come with (rootfs/parts.py linked). Termux's
-# packages depend on a lot only their tools or their building need; that stays out. What several
-# parts use goes to the one they all build on: Python and FFmpeg both link zlib and OpenSSL, so
-# those are in the core. In the app, a part lists everything it holds, each with its version.
-# Each part has its own version: a release keeps a part's previous archive (and version) as long as
-# what goes into it is the same, or its files come out the same (see rootfs/release.py), so the app
-# only updates what changed.
+# - abis: the ABIs it's built for, when not all (a part on top of it follows, say so)
+# - script: run on its exported files (rootfs/<script>, STAGE: its folder)
+# - source: built here instead (a name under sources)
+# Only what a part's packages use comes along (rootfs/parts.py linked); what several parts use goes to
+# the one they share (zlib, OpenSSL: core). A release keeps a part's version while its files stay the
+# same (rootfs/release.py), so the app only updates what changed.
 rootfs:
-  # Termux packages only for building: installed when pip has packages, never in a part (left out
-  # with what only they need, even as a dependency, as python-yt-dlp's of python-pip)
+  # Only for building (pip), never in a part
   build_packages:
     - python-pip
     - build-essential # Clang, Make, pkg-config
@@ -82,21 +60,20 @@ rootfs:
   parts:
     core:
       packages:
-        - dash # $PREFIX/bin/sh for anything shelling out (Android's sh can't run under proot on Samsung)
+        - dash # $PREFIX/bin/sh (Android's sh can't run under proot on Samsung)
 
-    python: # Python, for the tools running on it
+    python:
       requires: [core]
       packages:
         - python
 
-    # Small tools on Python, together (each would be a module of its own otherwise): the QR
-    # generator and the currency converter, and the next ones that light
+    # Small Python tools together (each would be its own module otherwise)
     pypkgs:
       requires: [python]
       pip:
         - qrcode[pil] # QR generator
         - CurrencyConverter # Currency converter
-      # Pillow is built against these only (Termux's python-pillow pulls in a lot more)
+      # Pillow built against these only (Termux's python-pillow pulls in much more)
       pip_libs:
         - libjpeg-turbo
         - zlib
@@ -107,29 +84,26 @@ rootfs:
       packages:
         - exiftool
 
-    ffmpeg: # Video encoder, and yt-dlp's (merging, remuxing, audio conversion, thumbnails)
-      # Not on Python: GLib's and libplacebo's packages depend on it, but nothing FFmpeg links does
-      requires: [core]
+    ffmpeg: # Video encoder, and yt-dlp's
+      requires: [core] # Not python: only GLib's and libplacebo's packages want it
       packages:
         - ffmpeg
-      # Built with Termux's recipe (its source, patches and options: x264, x265, VP9, SVT-AV1, dav1d,
-      # Opus, MP3, Vorbis, WebP, subtitles), without what the tools don't use: Termux's links every
-      # one of these, so it can't start without them (~35 MB)
+      # Termux's recipe without what no tool uses: Termux's links all of it, so it can't start without
+      # it (~35 MB)
       rebuild:
         ffmpeg:
           drop:
-            # Android's hardware codecs (no tool uses them): they link libandroid, whose libhwui needs
-            # what the device's maker added, where the linker doesn't look for a program run from /data
-            # (MediaTek: "vendor.mediatek.hardware.mbrain-V2-ndk.so" not found), so FFmpeg can't start
+            # Hardware codecs: libandroid's libhwui needs vendor libraries the linker doesn't find for
+            # programs run from /data (MediaTek), so FFmpeg couldn't start
             - --enable-mediacodec
             - --enable-jni # Only MediaCodec needs it
-            - --enable-libaom # More AV1 encoders: SVT-AV1 is the one used
+            - --enable-libaom # More AV1 encoders (SVT-AV1 is used)
             - --enable-librav1e
-            - --enable-libplacebo # Vulkan filters (no Vulkan under proot), with glslang
+            - --enable-libplacebo # Vulkan (none under proot)
             - --enable-vulkan
             - --enable-opencl
             - --enable-libjxl # JPEG XL
-            - --enable-librubberband # Audio filters nothing uses
+            - --enable-librubberband # Unused audio filters
             - --enable-libmysofa
             - --enable-libbs2b
             - --enable-libbluray # Discs, tracker and game music
@@ -137,61 +111,47 @@ rootfs:
             - --enable-libdvdread
             - --enable-libopenmpt
             - --enable-libgme
-            - --enable-libssh # Network protocols nothing uses
+            - --enable-libssh # Unused network protocols
             - --enable-libsrt
             - --enable-libzmq
-            - --enable-libxcb # X11 screen capture
+            - --enable-libxcb # X11 capture
             - --enable-libxcb-shm
             - --enable-libxcb-xfixes
             - --enable-libxcb-shape
             - --enable-indev=xcbgrab
-            - --enable-libv4l2 # Cameras through V4L2
+            - --enable-libv4l2 # V4L2 cameras
             - --enable-libvmaf # Quality metrics
-            - --enable-libxvid # Old or rare encoders (FFmpeg decodes these itself)
+            - --enable-libxvid # Old encoders (FFmpeg decodes these itself)
             - --enable-libtheora
             - --enable-libopencore-amrnb
             - --enable-libopencore-amrwb
             - --enable-libvo-amrwbenc
-          # Not in the recipe (Termux's build host has it): FFmpeg's x86 assembly
-          build_packages: [nasm]
+          build_packages: [nasm] # x86 assembly (Termux's build host has it)
       exclude:
-        # Fontconfig's DejaVu fonts: it finds Android's in /system/fonts (bound in proot)
-        - ttf-dejavu # ~10 MB
+        - ttf-dejavu # ~10 MB; Fontconfig finds Android's fonts in /system/fonts
 
     ytdlp: # Media downloader
       requires: [python, ffmpeg]
       packages:
-        # qjs: the JavaScript runtime yt-dlp solves YouTube's player challenges with (the app runs it with
-        # --js-runtimes quickjs); the solver's scripts come with yt-dlp itself, so no yt-dlp-ejs (it'd pull in Node.js)
+        # JS runtime for YouTube's challenges (--js-runtimes quickjs); no yt-dlp-ejs (it'd pull in Node.js)
         - quickjs-ng
       pip:
-        # PyPI's wheel, not Termux's yt-dlp: Termux builds it from the bare git tag, without the generated
-        # lazy_extractors.py, so every run imported all ~1800 extractors (each file traced by PRoot) before
-        # doing anything. The wheel has them (and the solver's scripts)
+        # PyPI's wheel: Termux's lacks lazy_extractors.py, so every run imported ~1800 extractors
         - yt-dlp
         - requests
 
-    # Java, for the tools running on it (the Minecraft server): a part per version, installed by the
-    # tool when one of its servers needs it (each Minecraft version runs on the Java Mojang's metadata names)
-    jdk25: # Java 25: Minecraft 26.1 and later
+    # Java for the Minecraft server: a part per version, installed when a server needs it
+    jdk25: # Minecraft 26.1+
       requires: [core]
-      # Termux doesn't build OpenJDK 25 for x86 (upstream dropped 32-bit x86): the part isn't there for
-      # it (see rootfs/release.py), nor Minecraft 26.1 and later on it
-      abis: [arm64-v8a, armeabi-v7a, x86_64]
+      abis: [arm64-v8a, armeabi-v7a, x86_64] # Termux has no OpenJDK 25 for x86
       packages:
-        # Its programs are update-alternatives' links, which aren't exported: jdk.sh links bin/java-25
-        - openjdk-25
-        # What libandroid-spawn (OpenJDK's) links, rebuilt for 16 KB pages (rootfs/rebuild-16k.sh):
-        # Termux's package of it, built before its recipe said so, doesn't depend on it
-        - libc++
+        - openjdk-25 # bin/java-25 (jdk.sh)
+        - libc++ # libandroid-spawn's, rebuilt for 16 KB pages (rootfs/rebuild-16k.sh)
       exclude:
-        # Sound, which none of the tools on it plays: its PulseAudio plugin pulls in PulseAudio, D-Bus
-        # and the codecs libsndfile links (FLAC, MP3, Opus, Vorbis), which went to the core as FFmpeg
-        # has them too. alsa-lib stays (Java's libjsound links it; it's never loaded headless)
-        - alsa-plugins
+        - alsa-plugins # Sound: pulls in PulseAudio, D-Bus and codecs (alsa-lib stays)
       script: jdk.sh
 
-    jdk21: # Java 21: Minecraft 1.20.5 to 1.21.x, on every ABI
+    jdk21: # Minecraft 1.20.5 to 1.21.x
       requires: [core]
       packages:
         - openjdk-21 # bin/java-21 (jdk.sh)
@@ -200,7 +160,7 @@ rootfs:
         - alsa-plugins # As jdk25's
       script: jdk.sh
 
-    jdk17: # Java 17: Minecraft 1.18 to 1.20.4, and 1.17.x (made for Java 16, which no one builds for Android), on every ABI
+    jdk17: # Minecraft 1.17 to 1.20.4 (1.17's Java 16 isn't built for Android)
       requires: [core]
       packages:
         - openjdk-17 # bin/java-17 (jdk.sh)
@@ -209,34 +169,28 @@ rootfs:
         - alsa-plugins # As jdk25's
       script: jdk.sh
 
-    jdk8: # Java 8: Minecraft up to 1.16.5, on every ABI (Termux has no Java older than 17)
+    jdk8: # Minecraft up to 1.16.5 (Termux has no Java older than 17)
       requires: [core] # Its wrapper's sh (dash)
       source: openjdk8
 
-    cloudflared: # Cloudflare Tunnel, for servers players reach from anywhere (the Minecraft server's)
+    cloudflared: # Cloudflare Tunnel, for servers reached from anywhere
       requires: [core]
       packages:
         - cloudflared
 
 
 # ------------------------------------------------------------------------------------------------
-# sources: what rootfs parts are built of here (a part's source), each by rootfs/<name>/build.sh,
-# with its own NDK and API, in its own workflow (build-<name>.yml, a job of build.yml)
+# sources: parts built here (rootfs/<name>/build.sh, build-<name>.yml), each with its own NDK and API
 # ------------------------------------------------------------------------------------------------
 sources:
-  # OpenJDK 8's JRE (the jdk8 part), from OpenJDK's source with rootfs/openjdk8/patches (PojavLauncher's
-  # for Android, and what the update pinned needs of GCC 4.9). Pinned: the patches fit it, so both change
-  # together
+  # OpenJDK 8's JRE (jdk8) with rootfs/openjdk8/patches
   openjdk8:
-    repo: openjdk/jdk8u
-    ref: jdk8u512-b07
-    # armeabi-v7a: OpenJDK's AArch32 port (32-bit ARM, which OpenJDK's own has no HotSpot for), at its
-    # build of the same version (its copies of OpenJDK's tags have none of its code); it comes later than
-    # OpenJDK's, so ref follows it: every ABI on one version
-    repo_arm: openjdk/aarch32-port-jdk8u
-    ref_arm: jdk8u512-b07-aarch32-20261009
-    # The last NDK with GCC, as PojavLauncher's (HotSpot 8 isn't C++ clang 13+ compiles right: it takes
-    # `this` as aligned, which markOop's isn't); its newest platform is Android 5 (21), which the JRE
-    # needs no more than (it runs on every Android the app does)
+    # The last NDK with GCC, as PojavLauncher's (clang 13+ miscompiles HotSpot 8); its newest API level
     ndk: r10e
     api: 21
+    # Pinned: the patches fit this tag, so both change together
+    repo: openjdk/jdk8u
+    ref: jdk8u512-b07
+    # armeabi-v7a: OpenJDK's AArch32 port, at the same version
+    repo_arm: openjdk/aarch32-port-jdk8u
+    ref_arm: jdk8u512-b07-aarch32-20261009

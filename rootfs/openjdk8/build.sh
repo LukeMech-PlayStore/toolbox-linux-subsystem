@@ -43,27 +43,27 @@ DEVKIT_TOOLCHAIN_PATH="\$DEVKIT_ROOT/$NDK_TRIPLE/bin"
 DEVKIT_SYSROOT="\$DEVKIT_ROOT/sysroot"
 EOF
 
-# Each ABI as OpenJDK's build and its lib/ folder name it. 32-bit ones get HotSpot's client VM (as
-# PojavLauncher's), ARM's from the AArch32 port (its own repository, tags, triple and patches/ folder)
+# Each ABI as OpenJDK's build and its lib/ folder name it, and its source (config's repo, or repo_arm:
+# the AArch32 port, with its own triple). 32-bit ones get HotSpot's client VM (as PojavLauncher's)
 case "$NDK_ARCH" in
-    arm64)  TARGET=$NDK_TRIPLE;               JDK_CPU=aarch64; LIB_ARCH=aarch64; VM=server; REPO=$(cfg repo);     SRC_REF=$(cfg ref);     SRC=upstream ;;
-    arm)    TARGET=aarch32-linux-androideabi; JDK_CPU=aarch32; LIB_ARCH=aarch32; VM=client; REPO=$(cfg repo_arm); SRC_REF=$(cfg ref_arm); SRC=arm ;;
-    x86)    TARGET=$NDK_TRIPLE;               JDK_CPU=x86;     LIB_ARCH=i386;    VM=client; REPO=$(cfg repo);     SRC_REF=$(cfg ref);     SRC=upstream ;;
-    x86_64) TARGET=$NDK_TRIPLE;               JDK_CPU=x86_64;  LIB_ARCH=amd64;   VM=server; REPO=$(cfg repo);     SRC_REF=$(cfg ref);     SRC=upstream ;;
+    arm64)  TARGET=$NDK_TRIPLE;               JDK_CPU=aarch64; LIB_ARCH=aarch64; VM=server; SRC=repo ;;
+    arm)    TARGET=aarch32-linux-androideabi; JDK_CPU=aarch32; LIB_ARCH=aarch32; VM=client; SRC=repo_arm ;;
+    x86)    TARGET=$NDK_TRIPLE;               JDK_CPU=x86;     LIB_ARCH=i386;    VM=client; SRC=repo ;;
+    x86_64) TARGET=$NDK_TRIPLE;               JDK_CPU=x86_64;  LIB_ARCH=amd64;   VM=server; SRC=repo ;;
 esac
+REPO=$(cfg "$SRC")
+SRC_REF=$(cfg "${SRC/repo/ref}")
 echo "OpenJDK $REPO@$SRC_REF for $ABI ($TARGET, $VM VM)"
 cd "$WORK"
 
 # The source at its tag, and the patches for it
 rm -rf openjdk
 git clone -q --depth 1 -b "$SRC_REF" "https://github.com/$REPO" openjdk
-# patches/ by where they apply: common/ to every ABI, then the source's (upstream/: OpenJDK's jdk8u;
-# arm/: its AArch32 port, 32-bit ARM's), then the ABI's own, by the NDK's name of it (arm64/, x86/; 32-bit
-# ARM's is arm/ already, applied once), each folder's in name order. As PojavLauncher applies its own
-# (the android.patch ones): what no longer fits upstream (a newer update) is left out, and said
-dirs=(common "$SRC")
-[ "$NDK_ARCH" = "$SRC" ] || dirs+=("$NDK_ARCH")
-for dir in "${dirs[@]}"; do
+# patches/ by where they apply: common/ to every ABI, then the source's (repo/, repo_arm/, as config
+# names them), then the ABI's own, by the NDK's name of it (arm64/, x86/), each folder's in name order.
+# As PojavLauncher applies its own (the android.patch ones): what no longer fits (a newer update) is
+# left out, and said
+for dir in common "$SRC" "$NDK_ARCH"; do
     for p in "$HERE/patches/$dir"/*.patch; do
         [ -e "$p" ] || continue
         git -C openjdk apply --reject --whitespace=fix "$p" || echo "::warning::$dir/$(basename "$p"): some hunks didn't apply"
