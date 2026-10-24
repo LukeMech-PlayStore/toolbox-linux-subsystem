@@ -7,11 +7,11 @@ on:
   workflow_call:
     inputs:
       ref:
-        description: The PRoot ref to build ("latest" resolved; empty: config.yaml's)
+        description: 'The PRoot ref to build ("latest" resolved; empty: config.yaml''s)'
         type: string
         default: ''
       talloc:
-        description: The talloc version to build (empty: config.yaml's)
+        description: 'The talloc version to build (empty: config.yaml''s)'
         type: string
         default: ''
     outputs:
