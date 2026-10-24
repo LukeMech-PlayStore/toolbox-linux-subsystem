@@ -60,17 +60,12 @@ if [ "$ABI" = x86 ]; then apply_patch jdk8-android-x86-page-trap.patch; fi
 patch -d openjdk -p1 --forward --fuzz=2 < "$HERE/patches/jdk8-bitmap-arrayallocator.patch"
 
 # What the build expects of a Linux system: X11's, Fontconfig's and ALSA's headers (the host's: configure
-# looks for them; the patches leave out what would use ALSA), CUPS' (printing, which the JRE only compiles
-# against), libraries bionic has in libc (empty ones), and the C++ runtime the patches link statically:
-# GCC's libsupc++ (the NDK they were made for had it), here the NDK's own (LLVM's libc++ and libc++abi,
-# a linker script by its name)
+# looks for them; the patches leave out what would use ALSA), and CUPS' (printing, which the JRE only
+# compiles against)
 ln -sfn /usr/include/X11 "$INCLUDE/X11"
 ln -sfn /usr/include/fontconfig "$INCLUDE/fontconfig"
 ln -sfn /usr/include/alsa "$INCLUDE/alsa"
 ln -sfn /usr/include/cups "$INCLUDE/cups"
-mkdir -p dummy_libs
-for lib in pthread thread_db; do [ -f "dummy_libs/lib$lib.a" ] || "$AR" cru "dummy_libs/lib$lib.a"; done
-echo "INPUT(-lc++_static -lc++abi)" > dummy_libs/libsupc++.a
 
 # OpenJDK 8's C and C++ as clang takes them now: its C has what C99 and newer clangs make errors of
 # (functions used undeclared, ints for pointers), tentative definitions in headers (-fcommon), and its
@@ -95,7 +90,7 @@ bash ./configure BUILD_CC=clang BUILD_CXX=clang++ \
     --with-toolchain-type=clang \
     --with-extra-cflags="$FLAGS" \
     --with-extra-cxxflags="$FLAGS -std=gnu++98" \
-    --with-extra-ldflags="-L$WORK/dummy_libs $LDFLAGS_OLD" \
+    --with-extra-ldflags="$LDFLAGS_OLD" \
     --enable-option-checking=fatal \
     --with-jdk-variant=normal \
     --with-jvm-variants="$VM" \
@@ -112,13 +107,8 @@ bash ./configure BUILD_CC=clang BUILD_CXX=clang++ \
 BUILD="build/linux-$JDK_CPU-normal-$VM-release"
 [ -f "$BUILD/spec.gmk" ] || { echo "Error: configure failed" >&2; exit 1; }
 cd "$BUILD"
-# HotSpot takes clang from make (configure doesn't tell it), its warnings not as errors: a newer clang
-# warns of more than it was written for. No serviceability agent (libsaproc: a debugger's way into a
-# running JVM, no part of running programs; on API 29 its Android headers clash with bionic's), neither
-# built nor exported. Parallel makes sometimes trip over their own order: once more, as PojavLauncher does
-MAKE_ARGS=(JOBS="$JOBS" USE_CLANG=true WARNINGS_ARE_ERRORS=
-    BUILDLIBSAPROC= ADD_SA_BINARIES/x86= ADD_SA_BINARIES/aarch64= images)
-make "${MAKE_ARGS[@]}" || make "${MAKE_ARGS[@]}"
+# Parallel makes sometimes trip over their own order: once more, as PojavLauncher does
+make JOBS="$JOBS" images || make JOBS="$JOBS" images
 
 # The part: the JRE in Termux's prefix (usr/lib/jvm/java-8-openjdk, as Termux's Java), without its
 # debug info and man pages

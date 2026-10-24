@@ -1,5 +1,5 @@
 diff --git a/common/autoconf/build-aux/autoconf-config.sub b/common/autoconf/build-aux/autoconf-config.sub
-index 1aab2b303e..f38997fb41 100644
+index 1aab2b3..f38997f 100644
 --- a/common/autoconf/build-aux/autoconf-config.sub
 +++ b/common/autoconf/build-aux/autoconf-config.sub
 @@ -1257,6 +1257,9 @@ case $os in
@@ -13,7 +13,7 @@ index 1aab2b303e..f38997fb41 100644
  	# The portable systems comes first.
  	# Each alternative MUST END IN A *, to match a version number.
 diff --git a/common/autoconf/build-aux/config.sub b/common/autoconf/build-aux/config.sub
-index cc958da946..162e27c064 100644
+index cc958da..162e27c 100644
 --- a/common/autoconf/build-aux/config.sub
 +++ b/common/autoconf/build-aux/config.sub
 @@ -30,7 +30,8 @@
@@ -38,10 +38,10 @@ index cc958da946..162e27c064 100644
              config=`echo $1 | sed 's/^aarch64-/arm-/'`
              sub_args="$sub_args $config"
 diff --git a/common/autoconf/generated-configure.sh b/common/autoconf/generated-configure.sh
-index 62f8f42998..0f91308a81 100644
+index 344c316..0043b76 100644
 --- a/common/autoconf/generated-configure.sh
 +++ b/common/autoconf/generated-configure.sh
-@@ -13587,6 +13587,11 @@ test -n "$target_alias" &&
+@@ -13801,6 +13801,11 @@ test -n "$target_alias" &&
        VAR_OS_API=posix
        VAR_OS_ENV=solaris
        ;;
@@ -53,7 +53,7 @@ index 62f8f42998..0f91308a81 100644
      *darwin*)
        VAR_OS=macosx
        VAR_OS_API=posix
-@@ -13725,6 +13730,11 @@ $as_echo "$OPENJDK_BUILD_OS-$OPENJDK_BUILD_CPU" >&6; }
+@@ -13951,6 +13956,11 @@ $as_echo "$OPENJDK_BUILD_OS-$OPENJDK_BUILD_CPU" >&6; }
        VAR_OS_API=posix
        VAR_OS_ENV=solaris
        ;;
@@ -65,11 +65,21 @@ index 62f8f42998..0f91308a81 100644
      *darwin*)
        VAR_OS=macosx
        VAR_OS_API=posix
+@@ -14870,7 +14880,8 @@ $as_echo "$with_jvm_variants" >&6; }
+ 
+ 
+ 
+-  INCLUDE_SA=true
++  # Android: no serviceability agent (its Linux side is glibc's)
++  INCLUDE_SA=false
+   if test "x$JVM_VARIANT_ZERO" = xtrue ; then
+     INCLUDE_SA=false
+   fi
 diff --git a/common/autoconf/platform.m4 b/common/autoconf/platform.m4
-index 945579d606..c54c580602 100644
+index 99c7820..add9c40 100644
 --- a/common/autoconf/platform.m4
 +++ b/common/autoconf/platform.m4
-@@ -118,6 +118,11 @@ AC_DEFUN([PLATFORM_EXTRACT_VARS_FROM_OS],
+@@ -130,6 +130,11 @@ AC_DEFUN([PLATFORM_EXTRACT_VARS_FROM_OS],
        VAR_OS_API=posix
        VAR_OS_ENV=solaris
        ;;
@@ -125,7 +135,7 @@ index 0000000000..e4264936ef
 +}
 \ No newline at end of file
 diff --git a/hotspot/make/linux/makefiles/gcc.make b/hotspot/make/linux/makefiles/gcc.make
-index 0e29abe8f8..856d8c7d06 100644
+index 70b130b..b8f3343 100644
 --- a/hotspot/make/linux/makefiles/gcc.make
 +++ b/hotspot/make/linux/makefiles/gcc.make
 @@ -202,7 +202,8 @@ else
@@ -138,7 +148,7 @@ index 0e29abe8f8..856d8c7d06 100644
  
  ifeq ($(USE_CLANG), true)
    # However we need to clean the code up before we can unrestrictedly enable this option with Clang
-@@ -279,8 +280,10 @@ endif
+@@ -288,8 +289,10 @@ endif
  #------------------------------------------------------------------------
  # Linker flags
  
@@ -147,7 +157,7 @@ index 0e29abe8f8..856d8c7d06 100644
 +# statically link libc++.so, work with gcc but ignored by g++
 +# STATIC_STDCXX = -Wl,-Bstatic -lstdc++ -Wl,-Bdynamic
 +
-+STATIC_STDCXX = -Wl,-Bstatic -lsupc++ -Wl,-Bdynamic
++STATIC_STDCXX = -Wl,-Bstatic -lc++_static -lc++abi -Wl,-Bdynamic
  # While the VM needs the above line, adlc needs a separate setting:
  ADLC_STATIC_STDCXX = -static-libstdc++
  
@@ -1364,23 +1374,37 @@ index 3ce8e92cc3..af2601b8eb 100644
  #endif
  #endif
 diff --git a/jdk/make/CompileDemos.gmk b/jdk/make/CompileDemos.gmk
-index 6c5eb432..c2ed8740 100644
+index 6c5eb43..387048c 100644
 --- a/jdk/make/CompileDemos.gmk
 +++ b/jdk/make/CompileDemos.gmk
-@@ -327,7 +327,8 @@ $(eval $(call SetupJVMTIDemo,hprof, java_crw_demo, \
-
+@@ -323,11 +323,12 @@ endif
+ $(eval $(call SetupJVMTIDemo,hprof, java_crw_demo, \
+     -I$(JDK_TOPDIR)/src/share/npt -I$(JDK_TOPDIR)/src/$(OPENJDK_TARGET_OS_API_DIR)/npt \
+     $(BUILD_LIBHPROF_AIX_EXTRA_CFLAGS), C, \
+-    -ldl, ws2_32.lib winmm.lib, -lsocket -lnsl, -lpthread, $(BUILD_LIBHPROF_AIX_EXTRA_SRC)))
++    -ldl, ws2_32.lib winmm.lib, -lsocket -lnsl, , $(BUILD_LIBHPROF_AIX_EXTRA_SRC)))
+ 
  $(eval $(call SetupJVMTIDemo,minst, agent_util java_crw_demo))
  $(eval $(call SetupJVMTIDemo,mtrace, agent_util java_crw_demo))
 -$(eval $(call SetupJVMTIDemo,waiters, agent_util, , C++))
 +# FIXME(Android): undefined reference to __gxx_personality_v0
 +#$(eval $(call SetupJVMTIDemo,waiters, agent_util, , C++))
  $(eval $(call SetupJVMTIDemo,versionCheck, agent_util))
-
+ 
  ##################################################################################################
 diff --git a/jdk/make/CompileLaunchers.gmk b/jdk/make/CompileLaunchers.gmk
-index 1f414e2e05..110d531b9d 100644
+index 61973b3..7371869 100644
 --- a/jdk/make/CompileLaunchers.gmk
 +++ b/jdk/make/CompileLaunchers.gmk
+@@ -168,7 +168,7 @@ define SetupLauncher
+           $(ORIGIN_ARG) \
+           $$($1_LDFLAGS), \
+       LDFLAGS_macosx := $(call SET_SHARED_LIBRARY_NAME,$1), \
+-      LDFLAGS_linux := -lpthread \
++      LDFLAGS_linux := \
+           $(call SET_SHARED_LIBRARY_NAME,$(LIBRARY_PREFIX)$(SHARED_LIBRARY_SUFFIX)), \
+       LDFLAGS_solaris := $$($1_LDFLAGS_solaris) \
+           $(call SET_SHARED_LIBRARY_NAME,$(LIBRARY_PREFIX)$(SHARED_LIBRARY_SUFFIX)), \
 @@ -212,6 +212,9 @@ ifeq ($(OPENJDK_TARGET_OS), macosx)
    XLIBS :=
  endif
@@ -1391,7 +1415,7 @@ index 1f414e2e05..110d531b9d 100644
  ifdef OPENJDK
    JAVA_RC_FLAGS += -i "$(JDK_TOPDIR)/src/windows/resource/icons"
  else
-@@ -515,7 +518,7 @@ $(eval $(call SetupNativeCompilation,BUILD_UNPACKEXE, \
+@@ -522,7 +525,7 @@ $(eval $(call SetupNativeCompilation,BUILD_UNPACKEXE, \
      CFLAGS := $(UNPACKEXE_CFLAGS) $(CXXFLAGS_JDKEXE) \
          -DFULL, \
      CFLAGS_release := -DPRODUCT, \
@@ -1400,7 +1424,7 @@ index 1f414e2e05..110d531b9d 100644
      CFLAGS_solaris := -KPIC, \
      CFLAGS_macosx := -fPIC, \
      MAPFILE := $(UNPACK_MAPFILE),\
-@@ -524,7 +527,7 @@ $(eval $(call SetupNativeCompilation,BUILD_UNPACKEXE, \
+@@ -531,7 +534,7 @@ $(eval $(call SetupNativeCompilation,BUILD_UNPACKEXE, \
      LDFLAGS_posix := $(LDFLAGS_JDKEXE) $(LDFLAGS_CXX_JDK) \
          $(call SET_SHARED_LIBRARY_NAME,$(LIBRARY_PREFIX)unpack$(SHARED_LIBRARY_SUFFIX)) \
          $(call SET_SHARED_LIBRARY_ORIGIN), \
@@ -1410,7 +1434,7 @@ index 1f414e2e05..110d531b9d 100644
      LDFLAGS_SUFFIX := $(LIBCXX), \
      OBJECT_DIR := $(JDK_OUTPUTDIR)/objs/unpackexe$(OUTPUT_SUBDIR), \
 diff --git a/jdk/make/lib/Awt2dLibraries.gmk b/jdk/make/lib/Awt2dLibraries.gmk
-index 9368a9d508..347f30e6f5 100644
+index dc140de..1ddfd7a 100644
 --- a/jdk/make/lib/Awt2dLibraries.gmk
 +++ b/jdk/make/lib/Awt2dLibraries.gmk
 @@ -23,6 +23,8 @@
@@ -1432,7 +1456,7 @@ index 9368a9d508..347f30e6f5 100644
          XlibWrapper.c \
          XWindow.c \
          XToolkit.c \
-@@ -616,8 +619,8 @@ ifeq ($(findstring $(OPENJDK_TARGET_OS),windows macosx),)
+@@ -616,12 +619,11 @@ ifeq ($(findstring $(OPENJDK_TARGET_OS),windows macosx),)
          sun_awt_X11_GtkFileDialogPeer.c \
          XRSurfaceData.c \
          XRBackendNative.c
@@ -1443,7 +1467,11 @@ index 9368a9d508..347f30e6f5 100644
  
      ifeq ($(OPENJDK_TARGET_OS), linux)
        # To match old build, add this to LDFLAGS instead of suffix.
-@@ -792,15 +795,29 @@ ifeq ($(BUILD_HEADLESS), true)
+-      LIBAWT_XAWT_LDFLAGS += -lpthread
+     endif
+ 
+     $(eval $(call SetupNativeCompilation,BUILD_LIBAWT_XAWT, \
+@@ -792,15 +794,29 @@ ifeq ($(BUILD_HEADLESS), true)
          -I$(JDK_TOPDIR)/src/$(OPENJDK_TARGET_OS_API_DIR)/native/sun/jdga \
          $(foreach dir, $(LIBAWT_HEADLESS_DIRS), -I$(dir))
  
@@ -1476,7 +1504,7 @@ index 9368a9d508..347f30e6f5 100644
          X11FontScaler_md.c \
          X11TextRenderer_md.c \
          OGLBlitLoops.c \
-@@ -815,11 +832,9 @@ ifeq ($(BUILD_HEADLESS), true)
+@@ -815,11 +831,9 @@ ifeq ($(BUILD_HEADLESS), true)
          OGLSurfaceData.c \
          OGLTextRenderer.c \
          OGLVertexCache.c \
@@ -1489,7 +1517,7 @@ index 9368a9d508..347f30e6f5 100644
      LIBAWT_HEADLESS_REORDER :=
      ifeq ($(OPENJDK_TARGET_OS), solaris)
        ifneq ($(OPENJDK_TARGET_CPU), x86_64)
-@@ -914,8 +929,8 @@ $(eval $(call SetupNativeCompilation,BUILD_LIBFONTMANAGER, \
+@@ -969,8 +983,8 @@ $(eval $(call SetupNativeCompilation,BUILD_LIBFONTMANAGER, \
      EXCLUDE_FILES := $(LIBFONTMANAGER_EXCLUDE_FILES) \
          AccelGlyphCache.c, \
      LANG := C++, \
@@ -1500,16 +1528,16 @@ index 9368a9d508..347f30e6f5 100644
      OPTIMIZATION := $(LIBFONTMANAGER_OPTIMIZATION), \
      CFLAGS_windows = -I$(JDK_TOPDIR)/src/$(OPENJDK_TARGET_OS_API_DIR)/native/sun/windows \
          -DCC_NOEX, \
-@@ -924,7 +939,7 @@ $(eval $(call SetupNativeCompilation,BUILD_LIBFONTMANAGER, \
+@@ -979,7 +993,7 @@ $(eval $(call SetupNativeCompilation,BUILD_LIBFONTMANAGER, \
          $(subst -Wl$(COMMA)-z$(COMMA)defs,,$(LDFLAGS_JDKLIB))) $(LDFLAGS_CXX_JDK) \
          $(call SET_SHARED_LIBRARY_ORIGIN), \
      LDFLAGS_SUFFIX := $(BUILD_LIBFONTMANAGER_FONTLIB), \
 -    LDFLAGS_SUFFIX_linux := -lawt $(LIBM) $(LIBCXX) -ljava -ljvm -lc, \
-+    LDFLAGS_SUFFIX_linux := -lawt -lawt_headless $(LIBM) -lsupc++ -ljava -ljvm -lc, \
++    LDFLAGS_SUFFIX_linux := -lawt -lawt_headless $(LIBM) -lc++_static -lc++abi -ljava -ljvm -lc, \
      LDFLAGS_SUFFIX_solaris := -lawt -lawt_headless -lc $(LIBM) $(LIBCXX) -ljava -ljvm, \
      LDFLAGS_SUFFIX_aix := -lawt -lawt_headless $(LIBM) $(LIBCXX) -ljava -ljvm,\
      LDFLAGS_SUFFIX_macosx := -lawt $(LIBM) $(LIBCXX) -undefined dynamic_lookup \
-@@ -1052,12 +1067,12 @@ else # OPENJDK_TARGET_OS not windows
+@@ -1107,12 +1121,12 @@ else # OPENJDK_TARGET_OS not windows
      ifneq ($(OPENJDK_TARGET_OS), solaris)
        JAWT_LIBS += -lawt
      endif
@@ -1526,7 +1554,7 @@ index 9368a9d508..347f30e6f5 100644
    endif
  
    $(eval $(call SetupNativeCompilation,BUILD_LIBJAWT, \
-@@ -1083,11 +1098,11 @@ else # OPENJDK_TARGET_OS not windows
+@@ -1138,11 +1152,11 @@ else # OPENJDK_TARGET_OS not windows
        OBJECT_DIR := $(JDK_OUTPUTDIR)/objs/libjawt, \
        DEBUG_SYMBOLS := $(DEBUG_ALL_BINARIES)))
  
@@ -1542,17 +1570,17 @@ index 9368a9d508..347f30e6f5 100644
  
    ifeq ($(OPENJDK_TARGET_OS), macosx)
      $(BUILD_LIBJAWT): $(INSTALL_LIBRARIES_HERE)/$(LIBRARY_PREFIX)awt_lwawt$(SHARED_LIBRARY_SUFFIX)
-@@ -1195,7 +1210,8 @@ ifndef BUILD_HEADLESS_ONLY
+@@ -1256,7 +1270,8 @@ ifndef BUILD_HEADLESS_ONLY
    else ifeq ($(OPENJDK_TARGET_OS), windows)
      LIBSPLASHSCREEN_LDFLAGS_SUFFIX += kernel32.lib user32.lib gdi32.lib delayimp.lib -DELAYLOAD:user32.dll
    else
 -    LIBSPLASHSCREEN_LDFLAGS_SUFFIX += $(X_LIBS) -lX11 -lXext $(LIBM) -lpthread
 +    # $(X_LIBS) -lX11 -lXext
-+    LIBSPLASHSCREEN_LDFLAGS_SUFFIX += $(LIBM) -lpthread
++    LIBSPLASHSCREEN_LDFLAGS_SUFFIX += $(LIBM)
    endif
  
    $(eval $(call SetupNativeCompilation,LIBSPLASHSCREEN, \
-@@ -1219,7 +1235,7 @@ ifndef BUILD_HEADLESS_ONLY
+@@ -1280,7 +1295,7 @@ ifndef BUILD_HEADLESS_ONLY
        OBJECT_DIR := $(JDK_OUTPUTDIR)/objs/libsplashscreen, \
        DEBUG_SYMBOLS := $(DEBUG_ALL_BINARIES)))
  
@@ -1562,9 +1590,18 @@ index 9368a9d508..347f30e6f5 100644
    ifeq ($(OPENJDK_TARGET_OS), macosx)
      $(LIBSPLASHSCREEN): $(INSTALL_LIBRARIES_HERE)/$(LIBRARY_PREFIX)osxapp$(SHARED_LIBRARY_SUFFIX)
 diff --git a/jdk/make/lib/NioLibraries.gmk b/jdk/make/lib/NioLibraries.gmk
-index 6c9c46a3f3..120d627a4e 100644
+index 6c9c46a..1d8c1fa 100644
 --- a/jdk/make/lib/NioLibraries.gmk
 +++ b/jdk/make/lib/NioLibraries.gmk
+@@ -142,7 +142,7 @@ $(eval $(call SetupNativeCompilation,BUILD_LIBNIO, \
+     MAPFILE := $(BUILD_LIBNIO_MAPFILE), \
+     LDFLAGS := $(LDFLAGS_JDKLIB) $(BUILD_LIBNIO_LDFLAGS) \
+         $(call SET_SHARED_LIBRARY_ORIGIN), \
+-    LDFLAGS_SUFFIX_linux := -ljava -lnet -lpthread $(LIBDL), \
++    LDFLAGS_SUFFIX_linux := -ljava -lnet $(LIBDL), \
+     LDFLAGS_SUFFIX_aix := -ljava -lnet $(LIBDL),\
+     LDFLAGS_SUFFIX_solaris := -ljvm -lsocket -lposix4 $(LIBDL) \
+         -lsendfile -ljava -lnet -lc, \
 @@ -170,7 +170,8 @@ ifeq ($(OPENJDK_TARGET_OS_API), posix)
    ifeq (, $(filter $(OPENJDK_TARGET_OS), macosx aix))
  
@@ -1575,8 +1612,17 @@ index 6c9c46a3f3..120d627a4e 100644
      ifeq ($(OPENJDK_TARGET_CPU_ARCH), ppc)
        SCTP_WERROR :=
      endif
+@@ -191,7 +192,7 @@ ifeq ($(OPENJDK_TARGET_OS_API), posix)
+         MAPFILE := $(JDK_TOPDIR)/make/mapfiles/libsctp/mapfile-vers, \
+         LDFLAGS := $(LDFLAGS_JDKLIB) \
+             $(call SET_SHARED_LIBRARY_ORIGIN), \
+-        LDFLAGS_SUFFIX_linux := -lpthread $(LIBDL) -ljava -ljvm, \
++        LDFLAGS_SUFFIX_linux := $(LIBDL) -ljava -ljvm, \
+         LDFLAGS_SUFFIX_posix := -lnio -lnet, \
+         LDFLAGS_SUFFIX_solaris := -lsocket -ljava -ljvm -lc, \
+         LDFLAGS_SUFFIX_macosx := -ljava -ljvm, \
 diff --git a/jdk/make/lib/SoundLibraries.gmk b/jdk/make/lib/SoundLibraries.gmk
-index b59a9462ec..6d57b09acd 100644
+index b59a946..6d57b09 100644
 --- a/jdk/make/lib/SoundLibraries.gmk
 +++ b/jdk/make/lib/SoundLibraries.gmk
 @@ -216,7 +216,7 @@ ifneq ($(filter jsoundalsa, $(EXTRA_SOUND_JNI_LIBS)), )
@@ -59159,3 +59205,97 @@ index 303c96d788..aa555cc286 100644
 +    }
 +
      /**
+diff --git a/hotspot/make/linux/makefiles/defs.make b/hotspot/make/linux/makefiles/defs.make
+index ec41463..47dded2 100644
+--- a/hotspot/make/linux/makefiles/defs.make
++++ b/hotspot/make/linux/makefiles/defs.make
+@@ -331,6 +331,7 @@ ADD_SA_BINARIES/zero  =
+ 
+ -include $(HS_ALT_MAKE)/linux/makefiles/defs.make
+ 
+-EXPORT_LIST += $(ADD_SA_BINARIES/$(HS_ARCH))
++# Android: no serviceability agent (its Linux side is glibc's)
++# EXPORT_LIST += $(ADD_SA_BINARIES/$(HS_ARCH))
+ 
+ 
+diff --git a/hotspot/make/linux/makefiles/saproc.make b/hotspot/make/linux/makefiles/saproc.make
+index ffc0ec5..beaff9f 100644
+--- a/hotspot/make/linux/makefiles/saproc.make
++++ b/hotspot/make/linux/makefiles/saproc.make
+@@ -69,7 +69,8 @@ endif
+ 
+ ifneq ($(wildcard $(AGENT_DIR)),)
+ ifneq ($(filter-out ia64 zero,$(SRCARCH)),)
+-  BUILDLIBSAPROC = $(LIBSAPROC)
++  # Android: no serviceability agent (its Linux side is glibc's)
++  # BUILDLIBSAPROC = $(LIBSAPROC)
+ endif
+ endif
+ 
+diff --git a/hotspot/make/linux/makefiles/vm.make b/hotspot/make/linux/makefiles/vm.make
+index 982f13a..0629ba7 100644
+--- a/hotspot/make/linux/makefiles/vm.make
++++ b/hotspot/make/linux/makefiles/vm.make
+@@ -130,7 +130,7 @@ ASFLAGS += $(EXTRA_ASFLAGS)
+ # the same could be done by separate execstack command
+ LFLAGS += -Xlinker -z -Xlinker noexecstack
+ 
+-LIBS += -lm -ldl -lpthread
++LIBS += -lm -ldl
+ 
+ # By default, link the *.o into the library, not the executable.
+ LINK_INTO$(LINK_INTO) = LIBJVM
+diff --git a/jdk/make/lib/CoreLibraries.gmk b/jdk/make/lib/CoreLibraries.gmk
+index 854177f..2d088be 100644
+--- a/jdk/make/lib/CoreLibraries.gmk
++++ b/jdk/make/lib/CoreLibraries.gmk
+@@ -455,7 +455,7 @@ $(eval $(call SetupNativeCompilation,BUILD_LIBJLI, \
+     LDFLAGS_solaris := $(call SET_SHARED_LIBRARY_ORIGIN,/..), \
+     LDFLAGS_macosx := -framework Cocoa -framework Security -framework ApplicationServices -mmacosx-version-min=$(MACOSX_VERSION_MIN), \
+     LDFLAGS_SUFFIX_solaris := $(LIBZ) $(LIBDL) -lc, \
+-    LDFLAGS_SUFFIX_linux := $(LIBZ) $(LIBDL) -lc -lpthread, \
++    LDFLAGS_SUFFIX_linux := $(LIBZ) $(LIBDL) -lc, \
+     LDFLAGS_SUFFIX_aix := $(LIBZ) $(LIBDL),\
+     LDFLAGS_SUFFIX_macosx := $(LIBZ), \
+     LDFLAGS_SUFFIX_windows := \
+diff --git a/jdk/make/lib/NetworkingLibraries.gmk b/jdk/make/lib/NetworkingLibraries.gmk
+index 347c323..9a5fa13 100644
+--- a/jdk/make/lib/NetworkingLibraries.gmk
++++ b/jdk/make/lib/NetworkingLibraries.gmk
+@@ -72,7 +72,7 @@ $(eval $(call SetupNativeCompilation,BUILD_LIBNET, \
+         $(call SET_SHARED_LIBRARY_ORIGIN), \
+     LDFLAGS_SUFFIX_macosx := -ljvm -ljava, \
+     LDFLAGS_SUFFIX_solaris := -ljvm -ljava -lnsl -lsocket $(LIBDL) -lc, \
+-    LDFLAGS_SUFFIX_linux := $(LIBDL) -ljvm -lpthread -ljava, \
++    LDFLAGS_SUFFIX_linux := $(LIBDL) -ljvm -ljava, \
+     LDFLAGS_SUFFIX_aix := $(LIBDL) -ljvm -ljava,\
+     LDFLAGS_SUFFIX_windows := ws2_32.lib jvm.lib secur32.lib iphlpapi.lib \
+         delayimp.lib $(WIN_JAVA_LIB) advapi32.lib \
+diff --git a/jdk/make/lib/ServiceabilityLibraries.gmk b/jdk/make/lib/ServiceabilityLibraries.gmk
+index c951b11..fa1592e 100644
+--- a/jdk/make/lib/ServiceabilityLibraries.gmk
++++ b/jdk/make/lib/ServiceabilityLibraries.gmk
+@@ -92,7 +92,6 @@ $(eval $(call SetupNativeCompilation,BUILD_LIBDT_SOCKET, \
+     MAPFILE := $(JDK_TOPDIR)/make/mapfiles/libdt_socket/mapfile-vers, \
+     LDFLAGS := $(LDFLAGS_JDKLIB) \
+         $(call SET_SHARED_LIBRARY_ORIGIN), \
+-    LDFLAGS_SUFFIX_linux := -lpthread, \
+     LDFLAGS_SUFFIX_solaris := -lnsl -lsocket -lc, \
+     LDFLAGS_SUFFIX_windows := $(LDFLAGS_JDKLIB_SUFFIX) -export:jdwpTransport_OnLoad ws2_32.lib, \
+     VERSIONINFO_RESOURCE := $(JDK_TOPDIR)/src/windows/resource/version.rc, \
+diff --git a/common/autoconf/hotspot-spec.gmk.in b/common/autoconf/hotspot-spec.gmk.in
+index 4497880..1d1498e 100644
+--- a/common/autoconf/hotspot-spec.gmk.in
++++ b/common/autoconf/hotspot-spec.gmk.in
+@@ -51,6 +51,11 @@ ALT_CUPS_HEADERS_PATH:=$(patsubst -I%,%,$(filter -I%,@CUPS_CFLAGS@))
+ HOSTCC:=@FIXPATH@ @BUILD_CC@
+ HOSTCXX:=@FIXPATH@ @BUILD_CXX@
+ 
++# HotSpot's makefiles tell clang by this (configure's toolchain doesn't reach them)
++ifeq ($(TOOLCHAIN_TYPE), clang)
++  USE_CLANG:=true
++endif
++
+ ####################################################
+ #
+ # Legacy Hotspot support
