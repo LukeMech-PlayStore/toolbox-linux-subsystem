@@ -1,8 +1,8 @@
 # What this repository builds and releases (build.yml: once a month, and with every change here), for
 # the app's Linux subsystem, in four sections:
 #
-#   android  What everything is built for: the app's ABIs, the NDK and the Android API level
-#   proot    PRoot, which runs the rootfs (proot/build.sh; it ships with the rootfs's core)
+#   android  What everything is built for: the app's ABIs
+#   proot    PRoot, which runs the rootfs (proot/build.sh; it ships with the rootfs's core), and its NDK
 #   rootfs   The rootfs, in parts the app installs as Play modules: what goes into each
 #   sources  What a rootfs part is built of here, not of Termux's packages (rootfs/<name>/build.sh)
 
@@ -11,10 +11,6 @@
 # android: what everything is built for
 # ------------------------------------------------------------------------------------------------
 android:
-  # What's compiled here (PRoot, the sources) is compiled with this NDK's clang, for this API level
-  # (Android 10, the app's oldest)
-  ndk: r30
-  api: 29
   # Every ABI Google Play supports (the app's jniLibs folders, a release's folders), with:
   # - ndk_arch: the NDK's name for it (proot/ndk-setup.sh)
   # - termux_arch: Termux's; the rootfs is built in termux/termux-docker:<this>
@@ -36,6 +32,10 @@ proot:
   repo: termux/proot
   ref: latest
   talloc: latest # Statically linked; latest: its newest release on samba.org
+  # Compiled with this NDK's clang (ndk.sh), for this API level (Android 10, the app's oldest). The
+  # rootfs's Termux packages, and those rebuilt here, are Termux's own (its toolchain, its API level)
+  ndk: r30
+  api: 29
 
 
 # ------------------------------------------------------------------------------------------------
@@ -221,11 +221,12 @@ rootfs:
 
 # ------------------------------------------------------------------------------------------------
 # sources: what rootfs parts are built of here (a part's source), each by rootfs/<name>/build.sh,
-# with android's NDK and API, in its own workflow (build-<name>.yml, a job of build.yml)
+# with its own NDK and API, in its own workflow (build-<name>.yml, a job of build.yml)
 # ------------------------------------------------------------------------------------------------
 sources:
   # OpenJDK 8's JRE (the jdk8 part), from OpenJDK's source with rootfs/openjdk8/patches (PojavLauncher's
-  # for Android, and what the update pinned needs). Pinned: the patches fit it, so both change together
+  # for Android, and what the update pinned needs of GCC 4.9). Pinned: the patches fit it, so both change
+  # together
   openjdk8:
     repo: openjdk/jdk8u
     ref: jdk8u512-b07
@@ -234,3 +235,8 @@ sources:
     # OpenJDK's, so ref follows it: every ABI on one version
     repo_arm: openjdk/aarch32-port-jdk8u
     ref_arm: jdk8u512-b07-aarch32-20261009
+    # The last NDK with GCC, as PojavLauncher's (HotSpot 8 isn't C++ clang 13+ compiles right: it takes
+    # `this` as aligned, which markOop's isn't); its newest platform is Android 5 (21), which the JRE
+    # needs no more than (it runs on every Android the app does)
+    ndk: r10e
+    api: 21

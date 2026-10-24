@@ -122,12 +122,10 @@ def fingerprint(part, config, manifest, proot=None):
     if proot:
         h.update(b"\0proot\0" + json.dumps(proot, sort_keys=True).encode())
     if source:
-        # Built here: of its config section, the NDK and API it's built with, and its build's files (and
-        # the NDK's setup), not Termux's build scripts
-        android = config.get("android") or {}
-        built_with = {"source": (config.get("sources") or {}).get(source), "ndk": android.get("ndk"), "api": android.get("api")}
+        # Built here: of its config section (with its NDK and API) and its build's files, not Termux's
+        # build scripts
+        built_with = {"source": (config.get("sources") or {}).get(source)}
         h.update(b"\0source\0" + json.dumps(built_with, sort_keys=True).encode())
-        h.update(b"\0ndk.sh\0" + read_file(NDK_SETUP))
         folder = os.path.join(HERE, source)
         files = sorted(os.path.relpath(os.path.join(root, n), folder).replace(os.sep, "/")
                        for root, _, names in os.walk(folder) for n in names)

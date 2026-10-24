@@ -1,6 +1,6 @@
 name: Build OpenJDK 8
 
-# OpenJDK 8's JRE for every ABI (config.yaml's sources.openjdk8, android), cross-compiled with the NDK
+# OpenJDK 8's JRE for every ABI (config.yaml's sources.openjdk8, android), cross-compiled with its NDK's GCC
 # (rootfs/openjdk8/build.sh): a job of build.yml, whose build puts it in the rootfs as the jdk8 part.
 # Run by hand, it just builds it (an artifact per ABI, no release)
 on:
@@ -24,7 +24,7 @@ jobs:
         id: config
         run: |
           echo "abis=$(yq -o=json -I=0 '[.android.abis | keys[]]' config.yaml)" >> $GITHUB_OUTPUT
-          echo "ndk=$(yq -r '.android.ndk' config.yaml)" >> $GITHUB_OUTPUT
+          echo "ndk=$(yq -r '.sources.openjdk8.ndk' config.yaml)" >> $GITHUB_OUTPUT
 
   build:
     name: Build ${{ matrix.abi }}
@@ -55,9 +55,10 @@ jobs:
 
       - name: Install Build Dependencies
         run: |
-          # Clang for the tools the build runs here; X11's, ALSA's, CUPS' and Fontconfig's headers for configure
+          # The multilib compilers for the tools the build runs here (32-bit ABIs); X11's, ALSA's, CUPS' and
+          # Fontconfig's headers for configure
           sudo apt-get update
-          sudo apt-get -y install autoconf unzip zip patchelf clang systemtap-sdt-dev libelf-dev \
+          sudo apt-get -y install autoconf unzip zip patchelf systemtap-sdt-dev gcc-multilib g++-multilib libelf-dev \
             libxtst-dev libxrender-dev libxt-dev libxrandr-dev libasound2-dev libcups2-dev libfontconfig1-dev libx11-dev
 
       - name: Build

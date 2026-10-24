@@ -114,7 +114,7 @@ build_arch() {
 
     # 1. Setup Environment: the NDK's clang for it; cpufeatures' headers, position-independent code, and
     #    64-bit off_t (every API level the app runs on has it) for talloc's configure
-    ndk_setup "$ABI_DIR"
+    ndk_setup "$ABI_DIR" proot
     local ARCH=$NDK_ARCH
     unset CFLAGS LDFLAGS CXXFLAGS
     export CFLAGS="-I${ANDROID_NDK_HOME}/sources/android/cpufeatures -fPIC"

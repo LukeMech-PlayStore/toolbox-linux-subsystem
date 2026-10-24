@@ -1,5 +1,5 @@
 diff --git a/common/autoconf/build-aux/autoconf-config.sub b/common/autoconf/build-aux/autoconf-config.sub
-index 1aab2b3..f38997f 100644
+index 1aab2b303e..f38997fb41 100644
 --- a/common/autoconf/build-aux/autoconf-config.sub
 +++ b/common/autoconf/build-aux/autoconf-config.sub
 @@ -1257,6 +1257,9 @@ case $os in
@@ -13,10 +13,10 @@ index 1aab2b3..f38997f 100644
  	# The portable systems comes first.
  	# Each alternative MUST END IN A *, to match a version number.
 diff --git a/common/autoconf/generated-configure.sh b/common/autoconf/generated-configure.sh
-index 344c316..0043b76 100644
+index 62f8f42998..0f91308a81 100644
 --- a/common/autoconf/generated-configure.sh
 +++ b/common/autoconf/generated-configure.sh
-@@ -13801,6 +13801,11 @@ test -n "$target_alias" &&
+@@ -13587,6 +13587,11 @@ test -n "$target_alias" &&
        VAR_OS_API=posix
        VAR_OS_ENV=solaris
        ;;
@@ -28,7 +28,7 @@ index 344c316..0043b76 100644
      *darwin*)
        VAR_OS=macosx
        VAR_OS_API=posix
-@@ -13951,6 +13956,11 @@ $as_echo "$OPENJDK_BUILD_OS-$OPENJDK_BUILD_CPU" >&6; }
+@@ -13725,6 +13730,11 @@ $as_echo "$OPENJDK_BUILD_OS-$OPENJDK_BUILD_CPU" >&6; }
        VAR_OS_API=posix
        VAR_OS_ENV=solaris
        ;;
@@ -41,10 +41,10 @@ index 344c316..0043b76 100644
        VAR_OS=macosx
        VAR_OS_API=posix
 diff --git a/common/autoconf/platform.m4 b/common/autoconf/platform.m4
-index 99c7820..add9c40 100644
+index 945579d606..c54c580602 100644
 --- a/common/autoconf/platform.m4
 +++ b/common/autoconf/platform.m4
-@@ -130,6 +130,11 @@ AC_DEFUN([PLATFORM_EXTRACT_VARS_FROM_OS],
+@@ -118,6 +118,11 @@ AC_DEFUN([PLATFORM_EXTRACT_VARS_FROM_OS],
        VAR_OS_API=posix
        VAR_OS_ENV=solaris
        ;;
@@ -99,8 +99,1289 @@ index 0000000000..e4264936ef
 +  return "stable";
 +}
 \ No newline at end of file
+diff --git a/hotspot/agent/src/os/linux/Makefile b/hotspot/agent/src/os/linux/Makefile
+index c0b5c869c1..392c18d042 100644
+--- a/hotspot/agent/src/os/linux/Makefile
++++ b/hotspot/agent/src/os/linux/Makefile
+@@ -36,9 +36,9 @@ SOURCES  = salibelf.c   \
+ 
+ INCLUDES = -I${JAVA_HOME}/include -I${JAVA_HOME}/include/linux 
+ 
+-OBJS     = $(SOURCES:%.c=$(ARCH)/%.o) $(ARCH)/sadis.o
++OBJS     = $(SOURCES:%.c=$(ARCH)/%.o) $(ARCH)/sadis.o $(ARCH)/libthread_db.o
+ 
+-LIBS     = -lthread_db
++# LIBS     = -lthread_db
+ 
+ CFLAGS   = -c -fPIC -g -D_GNU_SOURCE -D$(ARCH) $(INCLUDES) -I$(ARCH)
+ 
+@@ -62,9 +62,15 @@ $(ARCH)/sadis.o:  ../../share/native/sadis.c
+                 sun.jvm.hotspot.asm.Disassembler
+         $(GCC) $(CFLAGS) $< -o $@
+ 
++$(ARCH)/libthread_db.o: libthread_db.c
++        $(GCC) $(CFLAGS) $< -o $@
++
+ $(ARCH)/%.o: %.c
+         $(GCC) $(CFLAGS) $< -o $@
+ 
++$(ARCH)/hsearch/%.o: hsearch/%.c
++        $(GCC) $(CFLAGS) $< -o $@
++
+ ifndef LDNOMAP
+   LFLAGS_LIBSA = -Xlinker --version-script=mapfile
+ endif
+diff --git a/hotspot/agent/src/os/linux/glibc_procfs.h b/hotspot/agent/src/os/linux/glibc_procfs.h
+new file mode 100644
+index 0000000000..1466897409
+--- /dev/null
++++ b/hotspot/agent/src/os/linux/glibc_procfs.h
+@@ -0,0 +1,209 @@
++/* Copyright (C) 2001, 2004 Free Software Foundation, Inc.
++   This file is part of the GNU C Library.
++   The GNU C Library is free software; you can redistribute it and/or
++   modify it under the terms of the GNU Lesser General Public
++   License as published by the Free Software Foundation; either
++   version 2.1 of the License, or (at your option) any later version.
++   The GNU C Library is distributed in the hope that it will be useful,
++   but WITHOUT ANY WARRANTY; without even the implied warranty of
++   MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the GNU
++   Lesser General Public License for more details.
++   You should have received a copy of the GNU Lesser General Public
++   License along with the GNU C Library; if not, write to the Free
++   Software Foundation, Inc., 59 Temple Place, Suite 330, Boston, MA
++   02111-1307 USA.  */
++
++#ifndef _SYS_PROCFS_H
++#define _SYS_PROCFS_H	1
++
++#define USE_LOCAL_PROCFS 1
++
++/* This is somewhat modelled after the file of the same name on SVR4
++   systems.  It provides a definition of the core file format for ELF
++   used on Linux.  It doesn't have anything to do with the /proc file
++   system, even though Linux has one.
++   Anyway, the whole purpose of this file is for GDB and GDB only.
++   Don't read too much into it.  Don't use it for anything other than
++   GDB unless you know what you are doing.  */
++
++#include <features.h>
++#include <sys/time.h>
++#include <sys/types.h>
++#include <sys/user.h>
++
++#ifndef USE_LOCAL_PROCFS
++# include <sys/procfs.h>
++#else
++# include <sys/cdefs.h>
++# include <sys/ucontext.h>
++#endif
++
++__BEGIN_DECLS
++
++#ifdef USE_LOCAL_PROCFS
++
++#if defined(__arm__)
++typedef struct user_fpregs fpregset_t;
++#elif defined(__aarch64__)
++/*
++struct user_regs_struct {
++  uint64_t regs[31];
++  uint64_t sp;
++  uint64_t pc;
++  uint64_t pstate;
++};
++*/
++struct user_fpsimd_struct {
++  __uint128_t vregs[32];
++  uint32_t fpsr;
++  uint32_t fpcr;
++};
++typedef struct user_fpsimd_struct fpregset_t;
++/*
++#elif defined(__i386__)
++struct _libc_fpreg {
++  unsigned short significand[4];
++  unsigned short exponent;
++};
++
++struct _libc_fpstate {
++  unsigned long cw;
++  unsigned long sw;
++  unsigned long tag;
++  unsigned long ipoff;
++  unsigned long cssel;
++  unsigned long dataoff;
++  unsigned long datasel;
++  struct _libc_fpreg _st[8];
++  unsigned long status;
++};
++
++typedef struct _libc_fpstate* fpregset_t;
++#elif defined(__x86_64__)
++struct _libc_fpxreg {
++  unsigned short significand[4];
++  unsigned short exponent;
++  unsigned short padding[3];
++};
++
++struct _libc_xmmreg {
++  uint32_t element[4];
++};
++
++struct _libc_fpstate {
++  uint16_t cwd;
++  uint16_t swd;
++  uint16_t ftw;
++  uint16_t fop;
++  uint64_t rip;
++  uint64_t rdp;
++  uint32_t mxcsr;
++  uint32_t mxcr_mask;
++  struct _libc_fpxreg _st[8];
++  struct _libc_xmmreg _xmm[16];
++  uint32_t padding[24];
++};
++
++typedef struct _libc_fpstate* fpregset_t;
++*/
++#endif
++
++typedef unsigned long elf_greg_t;
++typedef elf_greg_t elf_gregset_t[NGREG];
++
++typedef fpregset_t elf_fpregset_t;
++
++#if defined(__i386__)
++typedef struct user_fpxregs_struct elf_fpxregset_t;
++#endif
++
++typedef elf_gregset_t prgregset_t;
++typedef elf_fpregset_t prfpregset_t;
++
++typedef pid_t lwpid_t;
++typedef void* psaddr_t;
++
++struct elf_siginfo {
++  int si_signo;
++  int si_code;
++  int si_errno;
++};
++
++#endif // USE_LOCAL_PROCFS
++
++/* And the whole bunch of them.  We could have used `struct
++   user_regs_struct' directly in the typedef, but tradition says that
++   the register set is an array, which does have some peculiar
++   semantics, so leave it that way.  */
++#define ELF_NGREG (sizeof (struct user_regs_struct) / sizeof(elf_greg_t))
++
++#if !defined(__x86_64__) && !defined(__i386__)
++/* Definitions to generate Intel SVR4-like core files.  These mostly
++   have the same names as the SVR4 types with "elf_" tacked on the
++   front to prevent clashes with Linux definitions, and the typedef
++   forms have been avoided.  This is mostly like the SVR4 structure,
++   but more Linuxy, with things that Linux does not support and which
++   GDB doesn't really use excluded.  */
++struct elf_prstatus
++  {
++    struct elf_siginfo pr_info;		/* Info associated with signal.  */
++    short int pr_cursig;		/* Current signal.  */
++    unsigned long int pr_sigpend;	/* Set of pending signals.  */
++    unsigned long int pr_sighold;	/* Set of held signals.  */
++    __pid_t pr_pid;
++    __pid_t pr_ppid;
++    __pid_t pr_pgrp;
++    __pid_t pr_sid;
++    struct timeval pr_utime;		/* User time.  */
++    struct timeval pr_stime;		/* System time.  */
++    struct timeval pr_cutime;		/* Cumulative user time.  */
++    struct timeval pr_cstime;		/* Cumulative system time.  */
++    elf_gregset_t pr_reg;		/* GP registers.  */
++    int pr_fpvalid;			/* True if math copro being used.  */
++  };
++
++#define ELF_PRARGSZ     (80)    /* Number of chars for args.  */
++struct elf_prpsinfo
++  {
++    char pr_state;			/* Numeric process state.  */
++    char pr_sname;			/* Char for pr_state.  */
++    char pr_zomb;			/* Zombie.  */
++    char pr_nice;			/* Nice val.  */
++    unsigned long int pr_flag;		/* Flags.  */
++#if __WORDSIZE == 32
++    unsigned short int pr_uid;
++    unsigned short int pr_gid;
++#else
++    unsigned int pr_uid;
++    unsigned int pr_gid;
++#endif
++    int pr_pid, pr_ppid, pr_pgrp, pr_sid;
++    /* Lots missing */
++    char pr_fname[16];			/* Filename of executable.  */
++    char pr_psargs[ELF_PRARGSZ];	/* Initial part of arg list.  */
++  };
++
++/* The rest of this file provides the types for emulation of the
++   Solaris <proc_service.h> interfaces that should be implemented by
++   users of libthread_db.  */
++
++/* Addresses.  */
++typedef void *psaddr_t;
++
++/* We don't have any differences between processes and threads,
++   therefore have only one PID type.  */
++typedef __pid_t lwpid_t;
++
++/* Register sets.  Linux has different names.  */
++typedef elf_gregset_t prgregset_t;
++typedef elf_fpregset_t prfpregset_t;
++
++#endif // !__x86_64__ && !__i386__
++
++/* Process status and info.  In the end we do provide typedefs for them.  */
++typedef struct elf_prstatus prstatus_t;
++typedef struct elf_prpsinfo prpsinfo_t;
++
++__END_DECLS
++
++#endif	/* sys/procfs.h */
+diff --git a/hotspot/agent/src/os/linux/hsearch/hcreate.c b/hotspot/agent/src/os/linux/hsearch/hcreate.c
+new file mode 100644
+index 0000000000..8f4622adb1
+--- /dev/null
++++ b/hotspot/agent/src/os/linux/hsearch/hcreate.c
+@@ -0,0 +1,75 @@
++/*-
++ * SPDX-License-Identifier: BSD-2-Clause-FreeBSD
++ *
++ * Copyright (c) 2015 Nuxi, https://nuxi.nl/
++ *
++ * Redistribution and use in source and binary forms, with or without
++ * modification, are permitted provided that the following conditions
++ * are met:
++ * 1. Redistributions of source code must retain the above copyright
++ *    notice, this list of conditions and the following disclaimer.
++ * 2. Redistributions in binary form must reproduce the above copyright
++ *    notice, this list of conditions and the following disclaimer in the
++ *    documentation and/or other materials provided with the distribution.
++ *
++ * THIS SOFTWARE IS PROVIDED BY THE AUTHOR AND CONTRIBUTORS ``AS IS'' AND
++ * ANY EXPRESS OR IMPLIED WARRANTIES, INCLUDING, BUT NOT LIMITED TO, THE
++ * IMPLIED WARRANTIES OF MERCHANTABILITY AND FITNESS FOR A PARTICULAR PURPOSE
++ * ARE DISCLAIMED.  IN NO EVENT SHALL THE AUTHOR OR CONTRIBUTORS BE LIABLE
++ * FOR ANY DIRECT, INDIRECT, INCIDENTAL, SPECIAL, EXEMPLARY, OR CONSEQUENTIAL
++ * DAMAGES (INCLUDING, BUT NOT LIMITED TO, PROCUREMENT OF SUBSTITUTE GOODS
++ * OR SERVICES; LOSS OF USE, DATA, OR PROFITS; OR BUSINESS INTERRUPTION)
++ * HOWEVER CAUSED AND ON ANY THEORY OF LIABILITY, WHETHER IN CONTRACT, STRICT
++ * LIABILITY, OR TORT (INCLUDING NEGLIGENCE OR OTHERWISE) ARISING IN ANY WAY
++ * OUT OF THE USE OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF
++ * SUCH DAMAGE.
++ */
++
++#include <sys/cdefs.h>
++__FBSDID("$FreeBSD: head/lib/libc/stdlib/hcreate.c 326193 2017-11-25 17:12:48Z pfg $");
++
++#include "search.h"
++#include <stdbool.h>
++#include <stddef.h>
++
++/*
++ * Thread unsafe interface: use a single process-wide hash table and
++ * forward calls to *_r() functions.
++ */
++
++static struct hsearch_data global_hashtable;
++static bool global_hashtable_initialized = false;
++
++int
++hcreate(size_t nel)
++{
++
++	return (1);
++}
++
++void
++hdestroy(void)
++{
++
++	/* Destroy global hash table if present. */
++	if (global_hashtable_initialized) {
++		hdestroy_r(&global_hashtable);
++		global_hashtable_initialized = false;
++	}
++}
++
++ENTRY *
++hsearch(ENTRY item, ACTION action)
++{
++	ENTRY *retval;
++
++	/* Create global hash table if needed. */
++	if (!global_hashtable_initialized) {
++		if (hcreate_r(0, &global_hashtable) == 0)
++			return (NULL);
++		global_hashtable_initialized = true;
++	}
++	if (hsearch_r(item, action, &retval, &global_hashtable) == 0)
++		return (NULL);
++	return (retval);
++}
+diff --git a/hotspot/agent/src/os/linux/hsearch/hcreate_r.c b/hotspot/agent/src/os/linux/hsearch/hcreate_r.c
+new file mode 100644
+index 0000000000..c8a1607050
+--- /dev/null
++++ b/hotspot/agent/src/os/linux/hsearch/hcreate_r.c
+@@ -0,0 +1,63 @@
++I/*-
++ * Copyright (c) 2015 Nuxi, https://nuxi.nl/
++ *
++ * Redistribution and use in source and binary forms, with or without
++ * modification, are permitted provided that the following conditions
++ * are met:
++ * 1. Redistributions of source code must retain the above copyright
++ *    notice, this list of conditions and the following disclaimer.
++ * 2. Redistributions in binary form must reproduce the above copyright
++ *    notice, this list of conditions and the following disclaimer in the
++ *    documentation and/or other materials provided with the distribution.
++ *
++ * THIS SOFTWARE IS PROVIDED BY THE AUTHOR AND CONTRIBUTORS ``AS IS'' AND
++ * ANY EXPRESS OR IMPLIED WARRANTIES, INCLUDING, BUT NOT LIMITED TO, THE
++ * IMPLIED WARRANTIES OF MERCHANTABILITY AND FITNESS FOR A PARTICULAR PURPOSE
++ * ARE DISCLAIMED.  IN NO EVENT SHALL THE AUTHOR OR CONTRIBUTORS BE LIABLE
++ * FOR ANY DIRECT, INDIRECT, INCIDENTAL, SPECIAL, EXEMPLARY, OR CONSEQUENTIAL
++ * DAMAGES (INCLUDING, BUT NOT LIMITED TO, PROCUREMENT OF SUBSTITUTE GOODS
++ * OR SERVICES; LOSS OF USE, DATA, OR PROFITS; OR BUSINESS INTERRUPTION)
++ * HOWEVER CAUSED AND ON ANY THEORY OF LIABILITY, WHETHER IN CONTRACT, STRICT
++ * LIABILITY, OR TORT (INCLUDING NEGLIGENCE OR OTHERWISE) ARISING IN ANY WAY
++ * OUT OF THE USE OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF
++ * SUCH DAMAGE.
++ */
++
++#include <sys/cdefs.h>
++__FBSDID("$FreeBSD: head/lib/libc/stdlib/hcreate_r.c 292767 2015-12-27 07:50:11Z ed $");
++
++#include "search.h"
++#include <stdlib.h>
++
++#include "hsearch.h"
++
++int
++hcreate_r(size_t nel, struct hsearch_data *htab)
++{
++	struct __hsearch *hsearch;
++
++	/*
++	 * Allocate a hash table object. Ignore the provided hint and start
++	 * off with a table of sixteen entries. In most cases this hint is
++	 * just a wild guess. Resizing the table dynamically if the use
++	 * increases a threshold does not affect the worst-case running time.
++	 */
++	hsearch = malloc(sizeof(*hsearch));
++	if (hsearch == NULL)
++		return 0;
++	hsearch->entries = calloc(16, sizeof(ENTRY));
++	if (hsearch->entries == NULL) {
++		free(hsearch);
++		return 0;
++	}
++
++	/*
++	 * Pick a random initialization for the FNV-1a hashing. This makes it
++	 * hard to come up with a fixed set of keys to force hash collisions.
++	 */
++	arc4random_buf(&hsearch->offset_basis, sizeof(hsearch->offset_basis));
++	hsearch->index_mask = 0xf;
++	hsearch->entries_used = 0;
++	htab->__hsearch = hsearch;
++	return 1;
++}
+diff --git a/hotspot/agent/src/os/linux/hsearch/hdestroy_r.c b/hotspot/agent/src/os/linux/hsearch/hdestroy_r.c
+new file mode 100644
+index 0000000000..bea90141ec
+--- /dev/null
++++ b/hotspot/agent/src/os/linux/hsearch/hdestroy_r.c
+@@ -0,0 +1,43 @@
++/*-
++ * Copyright (c) 2015 Nuxi, https://nuxi.nl/
++ *
++ * Redistribution and use in source and binary forms, with or without
++ * modification, are permitted provided that the following conditions
++ * are met:
++ * 1. Redistributions of source code must retain the above copyright
++ *    notice, this list of conditions and the following disclaimer.
++ * 2. Redistributions in binary form must reproduce the above copyright
++ *    notice, this list of conditions and the following disclaimer in the
++ *    documentation and/or other materials provided with the distribution.
++ *
++ * THIS SOFTWARE IS PROVIDED BY THE AUTHOR AND CONTRIBUTORS ``AS IS'' AND
++ * ANY EXPRESS OR IMPLIED WARRANTIES, INCLUDING, BUT NOT LIMITED TO, THE
++ * IMPLIED WARRANTIES OF MERCHANTABILITY AND FITNESS FOR A PARTICULAR PURPOSE
++ * ARE DISCLAIMED.  IN NO EVENT SHALL THE AUTHOR OR CONTRIBUTORS BE LIABLE
++ * FOR ANY DIRECT, INDIRECT, INCIDENTAL, SPECIAL, EXEMPLARY, OR CONSEQUENTIAL
++ * DAMAGES (INCLUDING, BUT NOT LIMITED TO, PROCUREMENT OF SUBSTITUTE GOODS
++ * OR SERVICES; LOSS OF USE, DATA, OR PROFITS; OR BUSINESS INTERRUPTION)
++ * HOWEVER CAUSED AND ON ANY THEORY OF LIABILITY, WHETHER IN CONTRACT, STRICT
++ * LIABILITY, OR TORT (INCLUDING NEGLIGENCE OR OTHERWISE) ARISING IN ANY WAY
++ * OUT OF THE USE OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF
++ * SUCH DAMAGE.
++ */
++
++#include <sys/cdefs.h>
++__FBSDID("$FreeBSD: head/lib/libc/stdlib/hdestroy_r.c 292767 2015-12-27 07:50:11Z ed $");
++
++#include "search.h"
++#include <stdlib.h>
++
++#include "hsearch.h"
++
++void
++hdestroy_r(struct hsearch_data *htab)
++{
++	struct __hsearch *hsearch;
++
++	/* Free hash table object and its entries. */
++	hsearch = htab->__hsearch;
++	free(hsearch->entries);
++	free(hsearch);
++}
+diff --git a/hotspot/agent/src/os/linux/hsearch/hsearch.h b/hotspot/agent/src/os/linux/hsearch/hsearch.h
+new file mode 100644
+index 0000000000..8fdc352983
+--- /dev/null
++++ b/hotspot/agent/src/os/linux/hsearch/hsearch.h
+@@ -0,0 +1,40 @@
++/*-
++ * Copyright (c) 2015 Nuxi, https://nuxi.nl/
++ *
++ * Redistribution and use in source and binary forms, with or without
++ * modification, are permitted provided that the following conditions
++ * are met:
++ * 1. Redistributions of source code must retain the above copyright
++ *    notice, this list of conditions and the following disclaimer.
++ * 2. Redistributions in binary form must reproduce the above copyright
++ *    notice, this list of conditions and the following disclaimer in the
++ *    documentation and/or other materials provided with the distribution.
++ *
++ * THIS SOFTWARE IS PROVIDED BY THE AUTHOR AND CONTRIBUTORS ``AS IS'' AND
++ * ANY EXPRESS OR IMPLIED WARRANTIES, INCLUDING, BUT NOT LIMITED TO, THE
++ * IMPLIED WARRANTIES OF MERCHANTABILITY AND FITNESS FOR A PARTICULAR PURPOSE
++ * ARE DISCLAIMED.  IN NO EVENT SHALL THE AUTHOR OR CONTRIBUTORS BE LIABLE
++ * FOR ANY DIRECT, INDIRECT, INCIDENTAL, SPECIAL, EXEMPLARY, OR CONSEQUENTIAL
++ * DAMAGES (INCLUDING, BUT NOT LIMITED TO, PROCUREMENT OF SUBSTITUTE GOODS
++ * OR SERVICES; LOSS OF USE, DATA, OR PROFITS; OR BUSINESS INTERRUPTION)
++ * HOWEVER CAUSED AND ON ANY THEORY OF LIABILITY, WHETHER IN CONTRACT, STRICT
++ * LIABILITY, OR TORT (INCLUDING NEGLIGENCE OR OTHERWISE) ARISING IN ANY WAY
++ * OUT OF THE USE OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF
++ * SUCH DAMAGE.
++ *
++ * $FreeBSD: head/lib/libc/stdlib/hsearch.h 292767 2015-12-27 07:50:11Z ed $
++ */
++
++#ifndef HSEARCH_H
++#define HSEARCH_H
++
++#include "search.h"
++
++struct __hsearch {
++	size_t offset_basis;	/* Initial value for FNV-1a hashing. */
++	size_t index_mask;	/* Bitmask for indexing the table. */
++	size_t entries_used;	/* Number of entries currently used. */
++	ENTRY *entries;		/* Hash table entries. */
++};
++
++#endif
+diff --git a/hotspot/agent/src/os/linux/hsearch/hsearch_r.c b/hotspot/agent/src/os/linux/hsearch/hsearch_r.c
+new file mode 100644
+index 0000000000..1aa7936ae6
+--- /dev/null
++++ b/hotspot/agent/src/os/linux/hsearch/hsearch_r.c
+@@ -0,0 +1,150 @@
++/*-
++ * Copyright (c) 2015 Nuxi, https://nuxi.nl/
++ *
++ * Redistribution and use in source and binary forms, with or without
++ * modification, are permitted provided that the following conditions
++ * are met:
++ * 1. Redistributions of source code must retain the above copyright
++ *    notice, this list of conditions and the following disclaimer.
++ * 2. Redistributions in binary form must reproduce the above copyright
++ *    notice, this list of conditions and the following disclaimer in the
++ *    documentation and/or other materials provided with the distribution.
++ *
++ * THIS SOFTWARE IS PROVIDED BY THE AUTHOR AND CONTRIBUTORS ``AS IS'' AND
++ * ANY EXPRESS OR IMPLIED WARRANTIES, INCLUDING, BUT NOT LIMITED TO, THE
++ * IMPLIED WARRANTIES OF MERCHANTABILITY AND FITNESS FOR A PARTICULAR PURPOSE
++ * ARE DISCLAIMED.  IN NO EVENT SHALL THE AUTHOR OR CONTRIBUTORS BE LIABLE
++ * FOR ANY DIRECT, INDIRECT, INCIDENTAL, SPECIAL, EXEMPLARY, OR CONSEQUENTIAL
++ * DAMAGES (INCLUDING, BUT NOT LIMITED TO, PROCUREMENT OF SUBSTITUTE GOODS
++ * OR SERVICES; LOSS OF USE, DATA, OR PROFITS; OR BUSINESS INTERRUPTION)
++ * HOWEVER CAUSED AND ON ANY THEORY OF LIABILITY, WHETHER IN CONTRACT, STRICT
++ * LIABILITY, OR TORT (INCLUDING NEGLIGENCE OR OTHERWISE) ARISING IN ANY WAY
++ * OUT OF THE USE OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF
++ * SUCH DAMAGE.
++ */
++
++#include <sys/cdefs.h>
++__FBSDID("$FreeBSD: head/lib/libc/stdlib/hsearch_r.c 292767 2015-12-27 07:50:11Z ed $");
++
++#include <errno.h>
++#include <limits.h>
++#include "search.h"
++#include <stdint.h>
++#include <stdlib.h>
++#include <string.h>
++
++#include "hsearch.h"
++
++/*
++ * Look up an unused entry in the hash table for a given hash. For this
++ * implementation we use quadratic probing. Quadratic probing has the
++ * advantage of preventing primary clustering.
++ */
++static ENTRY *
++hsearch_lookup_free(struct __hsearch *hsearch, size_t hash)
++{
++	size_t index, i;
++
++	for (index = hash, i = 0;; index += ++i) {
++		ENTRY *entry = &hsearch->entries[index & hsearch->index_mask];
++		if (entry->key == NULL)
++			return (entry);
++	}
++}
++
++/*
++ * Computes an FNV-1a hash of the key. Depending on the pointer size, this
++ * either uses the 32- or 64-bit FNV prime.
++ */
++static size_t
++hsearch_hash(size_t offset_basis, const char *str)
++{
++	size_t hash;
++
++	hash = offset_basis;
++	while (*str != '\0') {
++		hash ^= (uint8_t)*str++;
++		if (sizeof(size_t) * CHAR_BIT <= 32)
++			hash *= UINT32_C(16777619);
++		else
++			hash *= UINT64_C(1099511628211);
++	}
++	return (hash);
++}
++
++int
++hsearch_r(ENTRY item, ACTION action, ENTRY **retval, struct hsearch_data *htab)
++{
++	struct __hsearch *hsearch;
++	ENTRY *entry, *old_entries, *new_entries;
++	size_t hash, index, i, old_hash, old_count, new_count;
++
++	hsearch = htab->__hsearch;
++	hash = hsearch_hash(hsearch->offset_basis, item.key);
++
++	/*
++	 * Search the hash table for an existing entry for this key.
++	 * Stop searching if we run into an unused hash table entry.
++	 */
++	for (index = hash, i = 0;; index += ++i) {
++		entry = &hsearch->entries[index & hsearch->index_mask];
++		if (entry->key == NULL)
++			break;
++		if (strcmp(entry->key, item.key) == 0) {
++			*retval = entry;
++			return (1);
++		}
++	}
++
++	/* Only perform the insertion if action is set to ENTER. */
++	if (action == FIND) {
++		errno = ESRCH;
++		return (0);
++	}
++
++	if (hsearch->entries_used * 2 >= hsearch->index_mask) {
++		/* Preserve the old hash table entries. */
++		old_count = hsearch->index_mask + 1;
++		old_entries = hsearch->entries;
++
++		/*
++		 * Allocate and install a new table if insertion would
++		 * yield a hash table that is more than 50% used. By
++		 * using 50% as a threshold, a lookup will only take up
++		 * to two steps on average.
++		 */
++		new_count = (hsearch->index_mask + 1) * 2;
++		new_entries = calloc(new_count, sizeof(ENTRY));
++		if (new_entries == NULL)
++			return (0);
++		hsearch->entries = new_entries;
++		hsearch->index_mask = new_count - 1;
++
++		/* Copy over the entries from the old table to the new table. */
++		for (i = 0; i < old_count; ++i) {
++			entry = &old_entries[i];
++			if (entry->key != NULL) {
++				old_hash = hsearch_hash(hsearch->offset_basis,
++				    entry->key);
++				*hsearch_lookup_free(hsearch, old_hash) =
++				    *entry;
++			}
++		}
++
++		/* Destroy the old hash table entries. */
++		free(old_entries);
++
++		/*
++		 * Perform a new lookup for a free table entry, so that
++		 * we insert the entry into the new hash table.
++		 */
++		hsearch = htab->__hsearch;
++		entry = hsearch_lookup_free(hsearch, hash);
++	}
++
++	/* Insert the new entry into the hash table. */
++	*entry = item;
++	++hsearch->entries_used;
++	*retval = entry;
++	return (1);
++}
+diff --git a/hotspot/agent/src/os/linux/hsearch/search.h b/hotspot/agent/src/os/linux/hsearch/search.h
+new file mode 100644
+index 0000000000..e44fb171c8
+--- /dev/null
++++ b/hotspot/agent/src/os/linux/hsearch/search.h
+@@ -0,0 +1,193 @@
++/*-
++ * Written by J.T. Conklin <jtc@netbsd.org>
++ * Public domain.
++ *
++ *	$NetBSD: search.h,v 1.12 1999/02/22 10:34:28 christos Exp $
++ * $FreeBSD: release/9.0.0/include/search.h 105250 2002-10-16 14:29:23Z robert $
++ */
++#pragma once
++/**
++ * @file search.h
++ * @brief Queues, hash tables, trees, and linear array searches.
++ */
++#include <sys/cdefs.h>
++#include <sys/types.h>
++/** See hsearch()/hsearch_r(). */
++typedef enum {
++  FIND,
++  ENTER
++} ACTION;
++/** See hsearch()/hsearch_r(). */
++typedef struct entry {
++  /** The string key. */
++  char* key;
++  /** The associated data. */
++  void* data;
++} ENTRY;
++/**
++ * Constants given to the twalk() visitor.
++ * Note that the constant names are misleading.
++ */
++typedef enum {
++  /**
++   * If this is the first visit to a non-leaf node.
++   * Use this for *preorder* traversal.
++   */
++  preorder,
++  /**
++   * If this is the second visit to a non-leaf node.
++   * Use this for *inorder* traversal.
++   */
++  postorder,
++  /**
++   * If this is the third visit to a non-leaf node.
++   * Use this for *postorder* traversal.
++   */
++  endorder,
++  /** If this is the first and only visit to a leaf node. */
++  leaf
++} VISIT;
++// #if defined(__USE_BSD) || defined(__USE_GNU)
++/** The hash table type for hcreate_r()/hdestroy_r()/hsearch_r(). */
++struct hsearch_data {
++  struct __hsearch* __hsearch;
++};
++//#endif
++__BEGIN_DECLS
++/**
++ * [insque(3)](http://man7.org/linux/man-pages/man3/insque.3.html) inserts
++ * an item in a queue (an intrusive doubly-linked list).
++ *
++ * Available since API level 21.
++ */
++void insque(void* __element, void* __previous); // __INTRODUCED_IN(21);
++/**
++ * [remque(3)](http://man7.org/linux/man-pages/man3/remque.3.html) removes
++ * an item from a queue (an intrusive doubly-linked list).
++ *
++ * Available since API level 21.
++ */
++void remque(void* __element); // __INTRODUCED_IN(21);
++/**
++ * [hcreate(3)](http://man7.org/linux/man-pages/man3/hcreate.3.html)
++ * initializes the global hash table, with space for at least `__n` elements.
++ *
++ * See hcreate_r() if you need more than one hash table.
++ *
++ * Returns *non-zero* on success and returns 0 and sets `errno` on failure.
++ *
++ * Available since API level 28.
++ */
++int hcreate(size_t __n); // __INTRODUCED_IN(28);
++/**
++ * [hdestroy(3)](http://man7.org/linux/man-pages/man3/hdestroy.3.html) destroys
++ * the global hash table.
++ *
++ * See hdestroy_r() if you need more than one hash table.
++ *
++ * Available since API level 28.
++ */
++void hdestroy(void); // __INTRODUCED_IN(28);
++/**
++ * [hsearch(3)](http://man7.org/linux/man-pages/man3/hsearch.3.html) finds or
++ * inserts `__entry` in the global hash table, based on `__action`.
++ *
++ * See hsearch_r() if you need more than one hash table.
++ *
++ * Returns a pointer to the entry on success, and returns NULL and sets
++ * `errno` on failure.
++ *
++ * Available since API level 28.
++ */
++ENTRY* hsearch(ENTRY __entry, ACTION __action); // __INTRODUCED_IN(28);
++// #if defined(__USE_BSD) || defined(__USE_GNU)
++/**
++ * [hcreate_r(3)](http://man7.org/linux/man-pages/man3/hcreate_r.3.html)
++ * initializes a hash table `__table` with space for at least `__n` elements.
++ *
++ * Returns *non-zero* on success and returns 0 and sets `errno` on failure.
++ *
++ * Available since API level 28.
++ */
++int hcreate_r(size_t __n, struct hsearch_data* __table); // __INTRODUCED_IN(28);
++/**
++ * [hdestroy_r(3)](http://man7.org/linux/man-pages/man3/hdestroy_r.3.html) destroys
++ * the hash table `__table`.
++ *
++ * Available since API level 28.
++ */
++void hdestroy_r(struct hsearch_data* __table); // __INTRODUCED_IN(28);
++/**
++ * [hsearch_r(3)](http://man7.org/linux/man-pages/man3/hsearch_r.3.html) finds or
++ * inserts `__entry` in the hash table `__table`, based on `__action`.
++ *
++ * Returns *non-zero* on success and returns 0 and sets `errno` on failure.
++ * A pointer to the entry is returned in `*__result`.
++ *
++ * Available since API level 28.
++ */
++int hsearch_r(ENTRY __entry, ACTION __action, ENTRY** __result, struct hsearch_data* __table); // __INTRODUCED_IN(28);
++// #endif
++/**
++ * [lfind(3)](http://man7.org/linux/man-pages/man3/lfind.3.html) brute-force
++ * searches the unsorted array `__array` (of `__count` items each of size `__size`)
++ * for `__key`, using `__comparator`.
++ *
++ * See bsearch() if you have a sorted array.
++ *
++ * Returns a pointer to the matching element on success, or NULL on failure.
++ *
++ * Available since API level 21.
++ */
++void* lfind(const void* __key, const void* __array, size_t* __count, size_t __size, int (*__comparator)(const void*, const void*)); // __INTRODUCED_IN(21);
++/**
++ * [lsearch(3)](http://man7.org/linux/man-pages/man3/lsearch.3.html) brute-force
++ * searches the unsorted array `__array` (of `__count` items each of size `__size`)
++ * for `__key`, using `__comparator`.
++ *
++ * Unlike lfind(), on failure lsearch() will *insert* `__key` at the end of
++ * `__array` and increment `*__count`.
++ *
++ * Returns a pointer to the matching element on success, or to the newly-added
++ * element on failure.
++ *
++ * Available since API level 21.
++ */
++void* lsearch(const void* __key, void* __array, size_t* __count, size_t __size, int (*__comparator)(const void*, const void*)); // __INTRODUCED_IN(21);
++/**
++ * [tdelete(3)](http://man7.org/linux/man-pages/man3/tdelete.3.html) searches
++ * for and removes an element in the tree `*__root_ptr`. The search is performed
++ * using `__comparator`.
++ *
++ * Returns a pointer to the parent of the deleted node, or NULL on failure.
++ */
++void* tdelete(const void* __key, void** __root_ptr, int (*__comparator)(const void*, const void*));
++/**
++ * [tdestroy(3)](http://man7.org/linux/man-pages/man3/tdestroy.3.html) destroys
++ * the hash table `__root` using `__free_fn` on each node.
++ */
++void tdestroy(void* __root, void (*__free_fn)(void*));
++/**
++ * [tfind(3)](http://man7.org/linux/man-pages/man3/tfind.3.html) searches
++ * for an element in the tree `*__root_ptr`. The search is performed using
++ * `__comparator`.
++ *
++ * Returns a pointer to the matching node, or NULL on failure.
++ */
++void* tfind(const void* __key, void* const* __root_ptr, int (*__comparator)(const void*, const void*));
++/**
++ * [tsearch(3)](http://man7.org/linux/man-pages/man3/tsearch.3.html) searches
++ * for an element in the tree `*__root_ptr`. The search is performed using
++ * `__comparator`.
++ *
++ * Unlike tfind(), on failure tsearch() will *insert* `__key` into the tree.
++ *
++ * Returns a pointer to the matching node, or to the newly-added node.
++ */
++void* tsearch(const void* __key, void** __root_ptr, int (*__comparator)(const void*, const void*));
++/**
++ * [twalk(3)](http://man7.org/linux/man-pages/man3/twalk.3.html) calls
++ * `__visitor` on every node in the tree.
++ */
++void twalk(const void* __root, void (*__visitor)(const void*, VISIT, int)); // __INTRODUCED_IN(21);
++__END_DECLS
+diff --git a/hotspot/agent/src/os/linux/libproc_impl.c b/hotspot/agent/src/os/linux/libproc_impl.c
+index 73a15ce351..966ccdd4c9 100644
+--- a/hotspot/agent/src/os/linux/libproc_impl.c
++++ b/hotspot/agent/src/os/linux/libproc_impl.c
+@@ -26,7 +26,11 @@
+ #include <stdlib.h>
+ #include <string.h>
+ #include <fcntl.h>
++#ifndef __ANDROID__
+ #include <thread_db.h>
++#else
++#include "thread_db.h"
++#endif
+ #include "libproc_impl.h"
+ 
+ #define SA_ALTROOT "SA_ALTROOT"
+diff --git a/hotspot/agent/src/os/linux/libthread_db.c b/hotspot/agent/src/os/linux/libthread_db.c
+new file mode 100644
+index 0000000000..16b4e6b6d1
+--- /dev/null
++++ b/hotspot/agent/src/os/linux/libthread_db.c
+@@ -0,0 +1,143 @@
++/*
++ * Copyright (C) 2013 The Android Open Source Project
++ *
++ * Licensed under the Apache License, Version 2.0 (the "License");
++ * you may not use this file except in compliance with the License.
++ * You may obtain a copy of the License at
++ *
++ *      http://www.apache.org/licenses/LICENSE-2.0
++ *
++ * Unless required by applicable law or agreed to in writing, software
++ * distributed under the License is distributed on an "AS IS" BASIS,
++ * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
++ * See the License for the specific language governing permissions and
++ * limitations under the License.
++ */
++
++#include <dirent.h>
++#include <stdint.h>
++#include <stdio.h>
++#include <stdlib.h>
++#include <string.h>
++#include <sys/ptrace.h>
++#include <thread_db.h>
++#include <unistd.h>
++
++extern pid_t ps_getpid(struct ps_prochandle*);
++
++// We don't have any symbols to cache.
++char const** td_symbol_list(void) {
++    static char const* symbols[] = { NULL };
++    return symbols;
++}
++
++//
++// Thread agents.
++//
++
++td_err_e td_ta_new(struct ps_prochandle* proc_handle, td_thragent_t** agent_out) {
++    td_thragent_t* agent = (td_thragent_t*) calloc(1, sizeof(td_thragent_t));
++    if (!agent) {
++        return TD_MALLOC;
++    }
++
++    agent->pid = ps_getpid(proc_handle);
++    agent->ph = proc_handle;
++    *agent_out = agent;
++
++    return TD_OK;
++}
++
++
++td_err_e td_ta_delete(td_thragent_t* ta) {
++    free(ta);
++    return TD_OK;
++}
++
++td_err_e td_ta_map_lwp2thr(td_thragent_t const* agent, lwpid_t lwpid, td_thrhandle_t* th) {
++    th->pid = ps_getpid(agent->ph);
++    th->tid = lwpid;
++    return TD_OK;
++}
++
++td_err_e td_ta_thr_iter(td_thragent_t const* agent,
++                        td_thr_iter_f* func,
++                        void* cookie,
++                        td_thr_state_e state,
++                        int32_t prio,
++                        sigset_t* sigmask,
++                        uint32_t user_flags) {
++    td_err_e err = TD_OK;
++    char path[32];
++    DIR * dir;
++    struct dirent * entry;
++    td_thrhandle_t handle;
++
++    snprintf(path, sizeof(path), "/proc/%d/task/", agent->pid);
++    dir = opendir(path);
++    if (!dir) {
++        return TD_NOEVENT;
++    }
++
++    handle.pid = agent->pid;
++    while ((entry = readdir(dir)) != NULL) {
++        if (strcmp(entry->d_name, ".") == 0 || strcmp(entry->d_name, "..") == 0) {
++            continue;
++        }
++        handle.tid = atoi(entry->d_name);
++        if (func(&handle, cookie) != 0) {
++	    err = TD_DBERR;
++            break;
++        }
++    }
++
++    closedir(dir);
++
++    return err;
++}
++
++//
++// Threads.
++//
++
++td_err_e td_thr_get_info(td_thrhandle_t const* handle, td_thrinfo_t* info) {
++    info->ti_tid = handle->tid;
++    info->ti_lid = handle->tid; // Our pthreads uses kernel ids for tids
++    info->ti_state = TD_THR_SLEEP; /* XXX this needs to be read from /proc/<pid>/task/<tid>.
++                                      This is only used to see if the thread is a zombie or not */
++    return TD_OK;
++}
++
++//
++// TLS.
++//
++
++td_err_e td_thr_tlsbase(const td_thrhandle_t* unused1, unsigned long int unused2, psaddr_t* unused3) {
++  return TD_NOAPLIC; // TODO: fix this if/when we support ELF TLS.
++}
++
++td_err_e td_thr_tls_get_addr(const td_thrhandle_t* unused1, psaddr_t unused2, size_t unused3, psaddr_t* unused4) {
++  return TD_NOAPLIC; // TODO: fix this if/when we support ELF TLS.
++}
++
++//
++// Thread events.
++//
++
++// Thread events are no longer used by gdb >= 7.0.
++// Because we link gdbserver statically, though, we need definitions.
++td_err_e td_ta_set_event(td_thragent_t const* agent, td_thr_events_t* events) {
++    abort();
++}
++td_err_e td_ta_event_getmsg(td_thragent_t const* agent, td_event_msg_t* event) {
++    abort();
++}
++td_err_e td_thr_event_enable(const td_thrhandle_t* handle, int event) {
++    abort();
++}
++td_err_e td_ta_clear_event(const td_thragent_t* ta_arg, td_thr_events_t* event) {
++    abort();
++}
++td_err_e td_ta_event_addr(td_thragent_t const* agent, td_event_e event, td_notify_t* notify_out) {
++    abort();
++}
+diff --git a/hotspot/agent/src/os/linux/proc_service.h b/hotspot/agent/src/os/linux/proc_service.h
+index 802e5b0bbb..f3131eb364 100644
+--- a/hotspot/agent/src/os/linux/proc_service.h
++++ b/hotspot/agent/src/os/linux/proc_service.h
+@@ -26,7 +26,12 @@
+ #define _PROC_SERVICE_H_
+ 
+ #include <stdio.h>
++#ifndef __ANDROID__
+ #include <thread_db.h>
++#else
++#include "thread_db.h"
++// #include "glibc_procfs.h"
++#endif
+ 
+ // Linux does not have the proc service library, though it does provide the
+ // thread_db library which can be used to manipulate threads without having
+diff --git a/hotspot/agent/src/os/linux/ps_core.c b/hotspot/agent/src/os/linux/ps_core.c
+index b7fe4c095d..5f0695339a 100644
+--- a/hotspot/agent/src/os/linux/ps_core.c
++++ b/hotspot/agent/src/os/linux/ps_core.c
+@@ -543,7 +543,13 @@ static ps_prochandle_ops core_ops = {
+ static bool core_handle_prstatus(struct ps_prochandle* ph, const char* buf, size_t nbytes) {
+    // we have to read prstatus_t from buf
+    // assert(nbytes == sizeof(prstaus_t), "size mismatch on prstatus_t");
++
++#if defined(amd64) || defined(i386)
++   // for some reasons prstatus_t cause errors so skip it
++   return false;
++#else
+    prstatus_t* prstat = (prstatus_t*) buf;
++
+    thread_info* newthr;
+    print_debug("got integer regset for lwp %d\n", prstat->pr_pid);
+    // we set pthread_t to -1 for core dump
+@@ -601,6 +607,7 @@ static bool core_handle_prstatus(struct ps_prochandle* ph, const char* buf, size
+    }
+ 
+    return true;
++#endif
+ }
+ 
+ #define ROUNDUP(x, y)  ((((x)+((y)-1))/(y))*(y))
+diff --git a/hotspot/agent/src/os/linux/symtab.c b/hotspot/agent/src/os/linux/symtab.c
+index fbe69999f7..af4fdf79f8 100644
+--- a/hotspot/agent/src/os/linux/symtab.c
++++ b/hotspot/agent/src/os/linux/symtab.c
+@@ -22,9 +22,19 @@
+  *
+  */
+ 
++#ifndef __ANDROID__
++#include <search.h>
++#else
++// The full search.h implementation is on Android API 28, so we backport it.
++#include "hsearch/search.h"
++#endif
++
+ #include <unistd.h>
++#ifndef __ANDROID__
+ #include <sys/procfs.h>
+-#include <search.h>
++#else
++#include "glibc_procfs.h"
++#endif
+ #include <stdlib.h>
+ #include <string.h>
+ #include "symtab.h"
+@@ -395,7 +405,11 @@ static struct symtab* build_symtab_internal(int fd, const char *filename, bool t
+ 
+       // create hash table, we use hcreate_r, hsearch_r and hdestroy_r to
+       // manipulate the hash table.
++#ifndef __ANDROID__
+       symtab->hash_table = (struct hsearch_data*) calloc(1, sizeof(struct hsearch_data));
++#else // __ANDROID__
++      symtab->hash_table = &(struct hsearch_data){0};
++#endif // !__ANDROID__
+       rslt = hcreate_r(n, symtab->hash_table);
+       // guarantee(rslt, "unexpected failure: hcreate_r");
+ 
+@@ -543,3 +557,7 @@ const char* nearest_symbol(struct symtab* symtab, uintptr_t offset,
+   }
+   return NULL;
+ }
++
++#ifdef __ANDROID__
++# undef _GNU_SOURCE
++#endif
+diff --git a/hotspot/agent/src/os/linux/thread_db.h b/hotspot/agent/src/os/linux/thread_db.h
+new file mode 100644
+index 0000000000..567a19819f
+--- /dev/null
++++ b/hotspot/agent/src/os/linux/thread_db.h
+@@ -0,0 +1,175 @@
++/*
++ * Copyright (C) 2013 The Android Open Source Project
++ *
++ * Licensed under the Apache License, Version 2.0 (the "License");
++ * you may not use this file except in compliance with the License.
++ * You may obtain a copy of the License at
++ *
++ *      http://www.apache.org/licenses/LICENSE-2.0
++ *
++ * Unless required by applicable law or agreed to in writing, software
++ * distributed under the License is distributed on an "AS IS" BASIS,
++ * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
++ * See the License for the specific language governing permissions and
++ * limitations under the License.
++ */
++
++#pragma once
++
++#include <pthread.h>
++#include <signal.h>
++#include <stdint.h>
++// #include <sys/procfs.h>
++#include "glibc_procfs.h"
++#include <sys/types.h>
++
++#define TD_THR_ANY_USER_FLAGS       0xffffffff
++#define TD_THR_LOWEST_PRIORITY      -20
++#define TD_SIGNO_MASK               NULL
++
++/* td_err_e values */
++enum {
++    TD_OK,
++    TD_ERR,
++    TD_NOTHR,
++    TD_NOSV,
++    TD_NOLWP,
++    TD_BADPH,
++    TD_BADTH,
++    TD_BADSH,
++    TD_BADTA,
++    TD_BADKEY,
++    TD_NOMSG,
++    TD_NOFPREGS,
++    TD_NOLIBTHREAD,
++    TD_NOEVENT,
++    TD_NOCAPAB,
++    TD_DBERR,
++    TD_NOAPLIC,
++    TD_NOTSD,
++    TD_MALLOC,
++    TD_PARTIALREG,
++    TD_NOXREGS,
++    TD_VERSION
++};
++
++/*
++ * td_event_e values
++ * NOTE: There is a max of 32 events
++ */
++enum {
++    TD_CREATE,
++    TD_DEATH
++};
++
++/* td_thr_state_e values */
++enum {
++    TD_THR_ANY_STATE,
++    TD_THR_UNKNOWN,
++    TD_THR_SLEEP,
++    TD_THR_ZOMBIE
++};
++
++typedef int32_t td_err_e;
++typedef uint32_t td_event_e;
++typedef uint32_t td_notify_e;
++typedef uint32_t td_thr_state_e;
++typedef pthread_t thread_t;
++
++typedef struct
++{
++    pid_t pid;
++    struct ps_prochandle *ph;
++} td_thragent_t;
++
++typedef struct
++{
++    pid_t pid;
++    pid_t tid;
++    psaddr_t th_unique;
++} td_thrhandle_t;
++
++typedef struct
++{
++    td_event_e event;
++    td_thrhandle_t const * th_p;
++    union {
++        void * data;
++    } msg;
++} td_event_msg_t;
++
++typedef struct
++{
++    uint32_t events;
++} td_thr_events_t;
++
++typedef struct
++{
++    union {
++        void * bptaddr;
++    } u;
++} td_notify_t;
++
++typedef struct
++{
++    td_thr_state_e ti_state;
++    thread_t ti_tid; // pthread's id for the thread
++    int32_t ti_lid; // the kernel's id for the thread
++} td_thrinfo_t;
++
++
++#define td_event_emptyset(set) \
++    (set)->events = 0
++
++#define td_event_fillset(set) \
++    (set)->events = 0xffffffff
++
++#define td_event_addset(set, n) \
++    (set)->events |= (1 << n)
++
++
++typedef int td_thr_iter_f(td_thrhandle_t const *, void *);
++
++
++struct ps_prochandle;
++
++#ifdef __cplusplus
++extern "C"{
++#endif
++
++extern td_err_e td_ta_new(struct ps_prochandle * proc_handle, td_thragent_t ** thread_agent);
++
++extern td_err_e td_ta_delete(td_thragent_t * ta);
++
++extern td_err_e td_ta_set_event(td_thragent_t const * agent, td_thr_events_t * event);
++
++extern td_err_e td_ta_event_addr(td_thragent_t const * agent, td_event_e event, td_notify_t * notify);
++
++extern td_err_e td_ta_clear_event(const td_thragent_t * ta_arg,
++				  td_thr_events_t * event);
++
++extern td_err_e td_ta_event_getmsg(td_thragent_t const * agent, td_event_msg_t * event);
++
++extern td_err_e td_ta_map_lwp2thr(td_thragent_t const * agent, lwpid_t lwpid,
++				  td_thrhandle_t *th);
++
++extern td_err_e td_thr_get_info(td_thrhandle_t const * handle,
++				td_thrinfo_t * info);
++
++extern td_err_e td_thr_event_enable(const td_thrhandle_t * handle,
++				    int event);
++
++extern td_err_e td_ta_thr_iter(td_thragent_t const * agent, td_thr_iter_f * func, void * cookie,
++                               td_thr_state_e state, int32_t prio, sigset_t * sigmask, uint32_t user_flags);
++
++extern char const ** td_symbol_list(void);
++
++extern td_err_e td_thr_get_info(td_thrhandle_t const * handle, td_thrinfo_t * info);
++
++extern td_err_e td_thr_tlsbase(const td_thrhandle_t*, unsigned long int, psaddr_t*);
++
++extern td_err_e td_thr_tls_get_addr(const td_thrhandle_t*, psaddr_t, size_t, psaddr_t*);
++
++#ifdef __cplusplus
++}
++#endif
 diff --git a/hotspot/make/linux/makefiles/gcc.make b/hotspot/make/linux/makefiles/gcc.make
-index 70b130b..b8f3343 100644
+index 0e29abe8f8..856d8c7d06 100644
 --- a/hotspot/make/linux/makefiles/gcc.make
 +++ b/hotspot/make/linux/makefiles/gcc.make
 @@ -202,7 +202,8 @@ else
@@ -113,7 +1394,7 @@ index 70b130b..b8f3343 100644
  
  ifeq ($(USE_CLANG), true)
    # However we need to clean the code up before we can unrestrictedly enable this option with Clang
-@@ -288,8 +289,10 @@ endif
+@@ -279,8 +280,10 @@ endif
  #------------------------------------------------------------------------
  # Linker flags
  
@@ -122,7 +1403,7 @@ index 70b130b..b8f3343 100644
 +# statically link libc++.so, work with gcc but ignored by g++
 +# STATIC_STDCXX = -Wl,-Bstatic -lstdc++ -Wl,-Bdynamic
 +
-+STATIC_STDCXX = -Wl,-Bstatic -lc++_static -lc++abi -Wl,-Bdynamic
++STATIC_STDCXX = -Wl,-Bstatic -lsupc++ -Wl,-Bdynamic
  # While the VM needs the above line, adlc needs a separate setting:
  ADLC_STATIC_STDCXX = -static-libstdc++
  
@@ -1339,37 +2620,23 @@ index 3ce8e92cc3..af2601b8eb 100644
  #endif
  #endif
 diff --git a/jdk/make/CompileDemos.gmk b/jdk/make/CompileDemos.gmk
-index 6c5eb43..387048c 100644
+index 6c5eb432..c2ed8740 100644
 --- a/jdk/make/CompileDemos.gmk
 +++ b/jdk/make/CompileDemos.gmk
-@@ -323,11 +323,12 @@ endif
- $(eval $(call SetupJVMTIDemo,hprof, java_crw_demo, \
-     -I$(JDK_TOPDIR)/src/share/npt -I$(JDK_TOPDIR)/src/$(OPENJDK_TARGET_OS_API_DIR)/npt \
-     $(BUILD_LIBHPROF_AIX_EXTRA_CFLAGS), C, \
--    -ldl, ws2_32.lib winmm.lib, -lsocket -lnsl, -lpthread, $(BUILD_LIBHPROF_AIX_EXTRA_SRC)))
-+    -ldl, ws2_32.lib winmm.lib, -lsocket -lnsl, , $(BUILD_LIBHPROF_AIX_EXTRA_SRC)))
- 
+@@ -327,7 +327,8 @@ $(eval $(call SetupJVMTIDemo,hprof, java_crw_demo, \
+
  $(eval $(call SetupJVMTIDemo,minst, agent_util java_crw_demo))
  $(eval $(call SetupJVMTIDemo,mtrace, agent_util java_crw_demo))
 -$(eval $(call SetupJVMTIDemo,waiters, agent_util, , C++))
 +# FIXME(Android): undefined reference to __gxx_personality_v0
 +#$(eval $(call SetupJVMTIDemo,waiters, agent_util, , C++))
  $(eval $(call SetupJVMTIDemo,versionCheck, agent_util))
- 
+
  ##################################################################################################
 diff --git a/jdk/make/CompileLaunchers.gmk b/jdk/make/CompileLaunchers.gmk
-index 61973b3..7371869 100644
+index 1f414e2e05..110d531b9d 100644
 --- a/jdk/make/CompileLaunchers.gmk
 +++ b/jdk/make/CompileLaunchers.gmk
-@@ -168,7 +168,7 @@ define SetupLauncher
-           $(ORIGIN_ARG) \
-           $$($1_LDFLAGS), \
-       LDFLAGS_macosx := $(call SET_SHARED_LIBRARY_NAME,$1), \
--      LDFLAGS_linux := -lpthread \
-+      LDFLAGS_linux := \
-           $(call SET_SHARED_LIBRARY_NAME,$(LIBRARY_PREFIX)$(SHARED_LIBRARY_SUFFIX)), \
-       LDFLAGS_solaris := $$($1_LDFLAGS_solaris) \
-           $(call SET_SHARED_LIBRARY_NAME,$(LIBRARY_PREFIX)$(SHARED_LIBRARY_SUFFIX)), \
 @@ -212,6 +212,9 @@ ifeq ($(OPENJDK_TARGET_OS), macosx)
    XLIBS :=
  endif
@@ -1380,7 +2647,7 @@ index 61973b3..7371869 100644
  ifdef OPENJDK
    JAVA_RC_FLAGS += -i "$(JDK_TOPDIR)/src/windows/resource/icons"
  else
-@@ -522,7 +525,7 @@ $(eval $(call SetupNativeCompilation,BUILD_UNPACKEXE, \
+@@ -515,7 +518,7 @@ $(eval $(call SetupNativeCompilation,BUILD_UNPACKEXE, \
      CFLAGS := $(UNPACKEXE_CFLAGS) $(CXXFLAGS_JDKEXE) \
          -DFULL, \
      CFLAGS_release := -DPRODUCT, \
@@ -1389,7 +2656,7 @@ index 61973b3..7371869 100644
      CFLAGS_solaris := -KPIC, \
      CFLAGS_macosx := -fPIC, \
      MAPFILE := $(UNPACK_MAPFILE),\
-@@ -531,7 +534,7 @@ $(eval $(call SetupNativeCompilation,BUILD_UNPACKEXE, \
+@@ -524,7 +527,7 @@ $(eval $(call SetupNativeCompilation,BUILD_UNPACKEXE, \
      LDFLAGS_posix := $(LDFLAGS_JDKEXE) $(LDFLAGS_CXX_JDK) \
          $(call SET_SHARED_LIBRARY_NAME,$(LIBRARY_PREFIX)unpack$(SHARED_LIBRARY_SUFFIX)) \
          $(call SET_SHARED_LIBRARY_ORIGIN), \
@@ -1399,7 +2666,7 @@ index 61973b3..7371869 100644
      LDFLAGS_SUFFIX := $(LIBCXX), \
      OBJECT_DIR := $(JDK_OUTPUTDIR)/objs/unpackexe$(OUTPUT_SUBDIR), \
 diff --git a/jdk/make/lib/Awt2dLibraries.gmk b/jdk/make/lib/Awt2dLibraries.gmk
-index dc140de..1ddfd7a 100644
+index 9368a9d508..347f30e6f5 100644
 --- a/jdk/make/lib/Awt2dLibraries.gmk
 +++ b/jdk/make/lib/Awt2dLibraries.gmk
 @@ -23,6 +23,8 @@
@@ -1421,7 +2688,7 @@ index dc140de..1ddfd7a 100644
          XlibWrapper.c \
          XWindow.c \
          XToolkit.c \
-@@ -616,12 +619,11 @@ ifeq ($(findstring $(OPENJDK_TARGET_OS),windows macosx),)
+@@ -616,8 +619,8 @@ ifeq ($(findstring $(OPENJDK_TARGET_OS),windows macosx),)
          sun_awt_X11_GtkFileDialogPeer.c \
          XRSurfaceData.c \
          XRBackendNative.c
@@ -1432,11 +2699,7 @@ index dc140de..1ddfd7a 100644
  
      ifeq ($(OPENJDK_TARGET_OS), linux)
        # To match old build, add this to LDFLAGS instead of suffix.
--      LIBAWT_XAWT_LDFLAGS += -lpthread
-     endif
- 
-     $(eval $(call SetupNativeCompilation,BUILD_LIBAWT_XAWT, \
-@@ -792,15 +794,29 @@ ifeq ($(BUILD_HEADLESS), true)
+@@ -792,15 +795,29 @@ ifeq ($(BUILD_HEADLESS), true)
          -I$(JDK_TOPDIR)/src/$(OPENJDK_TARGET_OS_API_DIR)/native/sun/jdga \
          $(foreach dir, $(LIBAWT_HEADLESS_DIRS), -I$(dir))
  
@@ -1469,7 +2732,7 @@ index dc140de..1ddfd7a 100644
          X11FontScaler_md.c \
          X11TextRenderer_md.c \
          OGLBlitLoops.c \
-@@ -815,11 +831,9 @@ ifeq ($(BUILD_HEADLESS), true)
+@@ -815,11 +832,9 @@ ifeq ($(BUILD_HEADLESS), true)
          OGLSurfaceData.c \
          OGLTextRenderer.c \
          OGLVertexCache.c \
@@ -1482,7 +2745,7 @@ index dc140de..1ddfd7a 100644
      LIBAWT_HEADLESS_REORDER :=
      ifeq ($(OPENJDK_TARGET_OS), solaris)
        ifneq ($(OPENJDK_TARGET_CPU), x86_64)
-@@ -969,8 +983,8 @@ $(eval $(call SetupNativeCompilation,BUILD_LIBFONTMANAGER, \
+@@ -914,8 +929,8 @@ $(eval $(call SetupNativeCompilation,BUILD_LIBFONTMANAGER, \
      EXCLUDE_FILES := $(LIBFONTMANAGER_EXCLUDE_FILES) \
          AccelGlyphCache.c, \
      LANG := C++, \
@@ -1493,16 +2756,16 @@ index dc140de..1ddfd7a 100644
      OPTIMIZATION := $(LIBFONTMANAGER_OPTIMIZATION), \
      CFLAGS_windows = -I$(JDK_TOPDIR)/src/$(OPENJDK_TARGET_OS_API_DIR)/native/sun/windows \
          -DCC_NOEX, \
-@@ -979,7 +993,7 @@ $(eval $(call SetupNativeCompilation,BUILD_LIBFONTMANAGER, \
+@@ -924,7 +939,7 @@ $(eval $(call SetupNativeCompilation,BUILD_LIBFONTMANAGER, \
          $(subst -Wl$(COMMA)-z$(COMMA)defs,,$(LDFLAGS_JDKLIB))) $(LDFLAGS_CXX_JDK) \
          $(call SET_SHARED_LIBRARY_ORIGIN), \
      LDFLAGS_SUFFIX := $(BUILD_LIBFONTMANAGER_FONTLIB), \
 -    LDFLAGS_SUFFIX_linux := -lawt $(LIBM) $(LIBCXX) -ljava -ljvm -lc, \
-+    LDFLAGS_SUFFIX_linux := -lawt -lawt_headless $(LIBM) -lc++_static -lc++abi -ljava -ljvm -lc, \
++    LDFLAGS_SUFFIX_linux := -lawt -lawt_headless $(LIBM) -lsupc++ -ljava -ljvm -lc, \
      LDFLAGS_SUFFIX_solaris := -lawt -lawt_headless -lc $(LIBM) $(LIBCXX) -ljava -ljvm, \
      LDFLAGS_SUFFIX_aix := -lawt -lawt_headless $(LIBM) $(LIBCXX) -ljava -ljvm,\
      LDFLAGS_SUFFIX_macosx := -lawt $(LIBM) $(LIBCXX) -undefined dynamic_lookup \
-@@ -1107,12 +1121,12 @@ else # OPENJDK_TARGET_OS not windows
+@@ -1052,12 +1067,12 @@ else # OPENJDK_TARGET_OS not windows
      ifneq ($(OPENJDK_TARGET_OS), solaris)
        JAWT_LIBS += -lawt
      endif
@@ -1519,7 +2782,7 @@ index dc140de..1ddfd7a 100644
    endif
  
    $(eval $(call SetupNativeCompilation,BUILD_LIBJAWT, \
-@@ -1138,11 +1152,11 @@ else # OPENJDK_TARGET_OS not windows
+@@ -1083,11 +1098,11 @@ else # OPENJDK_TARGET_OS not windows
        OBJECT_DIR := $(JDK_OUTPUTDIR)/objs/libjawt, \
        DEBUG_SYMBOLS := $(DEBUG_ALL_BINARIES)))
  
@@ -1535,17 +2798,17 @@ index dc140de..1ddfd7a 100644
  
    ifeq ($(OPENJDK_TARGET_OS), macosx)
      $(BUILD_LIBJAWT): $(INSTALL_LIBRARIES_HERE)/$(LIBRARY_PREFIX)awt_lwawt$(SHARED_LIBRARY_SUFFIX)
-@@ -1256,7 +1270,8 @@ ifndef BUILD_HEADLESS_ONLY
+@@ -1195,7 +1210,8 @@ ifndef BUILD_HEADLESS_ONLY
    else ifeq ($(OPENJDK_TARGET_OS), windows)
      LIBSPLASHSCREEN_LDFLAGS_SUFFIX += kernel32.lib user32.lib gdi32.lib delayimp.lib -DELAYLOAD:user32.dll
    else
 -    LIBSPLASHSCREEN_LDFLAGS_SUFFIX += $(X_LIBS) -lX11 -lXext $(LIBM) -lpthread
 +    # $(X_LIBS) -lX11 -lXext
-+    LIBSPLASHSCREEN_LDFLAGS_SUFFIX += $(LIBM)
++    LIBSPLASHSCREEN_LDFLAGS_SUFFIX += $(LIBM) -lpthread
    endif
  
    $(eval $(call SetupNativeCompilation,LIBSPLASHSCREEN, \
-@@ -1280,7 +1295,7 @@ ifndef BUILD_HEADLESS_ONLY
+@@ -1219,7 +1235,7 @@ ifndef BUILD_HEADLESS_ONLY
        OBJECT_DIR := $(JDK_OUTPUTDIR)/objs/libsplashscreen, \
        DEBUG_SYMBOLS := $(DEBUG_ALL_BINARIES)))
  
@@ -1554,19 +2817,52 @@ index dc140de..1ddfd7a 100644
  
    ifeq ($(OPENJDK_TARGET_OS), macosx)
      $(LIBSPLASHSCREEN): $(INSTALL_LIBRARIES_HERE)/$(LIBRARY_PREFIX)osxapp$(SHARED_LIBRARY_SUFFIX)
+diff --git a/jdk/make/lib/CoreLibraries.gmk b/jdk/make/lib/CoreLibraries.gmk
+index 75886a6285..389cc6b85e 100644
+--- a/jdk/make/lib/CoreLibraries.gmk
++++ b/jdk/make/lib/CoreLibraries.gmk
+@@ -30,6 +30,28 @@ WIN_VERIFY_LIB := $(JDK_OUTPUTDIR)/objs/libverify/verify.lib
+ 
+ ##########################################################################################
+ 
++ifeq ($(OPENJDK_TARGET_OS), linux)
++#    MAPFILE := $(JDK_TOPDIR)/make/mapfiles/libtinyiconv/mapfile-vers, \
++BUILD_LIBTINYICONV_SRC := iconv.cpp
++$(eval $(call SetupNativeCompilation,BUILD_LIBTINYICONV, \
++    LIBRARY := tinyiconv, \
++    OUTPUT_DIR := $(INSTALL_LIBRARIES_HERE), \
++    SRC := $(JDK_TOPDIR)/src/share/tinyiconv, \
++    LANG := C++, \
++    OPTIMIZATION := LOW, \
++    CFLAGS := $(CXXFLAGS_JDKLIB) \
++        -I$(JDK_TOPDIR)/src/share/tinyiconv, \
++    LDFLAGS := $(LDFLAGS_JDKLIB) $(LDFLAGS_CXX_JDK) \
++        $(call SET_SHARED_LIBRARY_ORIGIN), \
++    LDFLAGS_SUFFIX_posix := $(LIBCXX) -lc, \
++    OBJECT_DIR := $(JDK_OUTPUTDIR)/objs/libtinyiconv, \
++    DEBUG_SYMBOLS := true))
++
++BUILD_LIBRARIES += $(BUILD_LIBTINYICONV)
++endif
++
++##########################################################################################
++
+ BUILD_LIBFDLIBM_OPTIMIZATION := NONE
+ 
+ ifeq ($(OPENJDK_TARGET_OS), solaris)
+@@ -542,7 +564,7 @@ $(eval $(call SetupNativeCompilation,BUILD_LIBNPT, \
+         -I$(JDK_TOPDIR)/src/$(OPENJDK_TARGET_OS_API_DIR)/npt, \
+     MAPFILE := $(JDK_TOPDIR)/make/mapfiles/libnpt/mapfile-vers, \
+     LDFLAGS := $(LDFLAGS_JDKLIB) \
+-        $(call SET_SHARED_LIBRARY_ORIGIN), \
++        $(call SET_SHARED_LIBRARY_ORIGIN) -ltinyiconv, \
+     LDFLAGS_macosx := -liconv, \
+     LDFLAGS_SUFFIX_windows := -export:nptInitialize -export:nptTerminate, \
+     LDFLAGS_SUFFIX_solaris := -lc, \
 diff --git a/jdk/make/lib/NioLibraries.gmk b/jdk/make/lib/NioLibraries.gmk
-index 6c9c46a..1d8c1fa 100644
+index 6c9c46a3f3..120d627a4e 100644
 --- a/jdk/make/lib/NioLibraries.gmk
 +++ b/jdk/make/lib/NioLibraries.gmk
-@@ -142,7 +142,7 @@ $(eval $(call SetupNativeCompilation,BUILD_LIBNIO, \
-     MAPFILE := $(BUILD_LIBNIO_MAPFILE), \
-     LDFLAGS := $(LDFLAGS_JDKLIB) $(BUILD_LIBNIO_LDFLAGS) \
-         $(call SET_SHARED_LIBRARY_ORIGIN), \
--    LDFLAGS_SUFFIX_linux := -ljava -lnet -lpthread $(LIBDL), \
-+    LDFLAGS_SUFFIX_linux := -ljava -lnet $(LIBDL), \
-     LDFLAGS_SUFFIX_aix := -ljava -lnet $(LIBDL),\
-     LDFLAGS_SUFFIX_solaris := -ljvm -lsocket -lposix4 $(LIBDL) \
-         -lsendfile -ljava -lnet -lc, \
 @@ -170,7 +170,8 @@ ifeq ($(OPENJDK_TARGET_OS_API), posix)
    ifeq (, $(filter $(OPENJDK_TARGET_OS), macosx aix))
  
@@ -1577,17 +2873,21 @@ index 6c9c46a..1d8c1fa 100644
      ifeq ($(OPENJDK_TARGET_CPU_ARCH), ppc)
        SCTP_WERROR :=
      endif
-@@ -191,7 +192,7 @@ ifeq ($(OPENJDK_TARGET_OS_API), posix)
-         MAPFILE := $(JDK_TOPDIR)/make/mapfiles/libsctp/mapfile-vers, \
-         LDFLAGS := $(LDFLAGS_JDKLIB) \
-             $(call SET_SHARED_LIBRARY_ORIGIN), \
--        LDFLAGS_SUFFIX_linux := -lpthread $(LIBDL) -ljava -ljvm, \
-+        LDFLAGS_SUFFIX_linux := $(LIBDL) -ljava -ljvm, \
-         LDFLAGS_SUFFIX_posix := -lnio -lnet, \
-         LDFLAGS_SUFFIX_solaris := -lsocket -ljava -ljvm -lc, \
-         LDFLAGS_SUFFIX_macosx := -ljava -ljvm, \
+diff --git a/jdk/make/lib/ServiceabilityLibraries.gmk b/jdk/make/lib/ServiceabilityLibraries.gmk
+index 31ffff62b0..8c068fc0e9 100644
+--- a/jdk/make/lib/ServiceabilityLibraries.gmk
++++ b/jdk/make/lib/ServiceabilityLibraries.gmk
+@@ -263,7 +263,7 @@ $(eval $(call SetupNativeCompilation,BUILD_LIBINSTRUMENT, \
+     LDFLAGS_solaris := $(call SET_SHARED_LIBRARY_ORIGIN,/jli), \
+     LDFLAGS_macosx := -Xlinker -all_load $(JDK_OUTPUTDIR)/objs/libjli_static.a \
+         -framework Cocoa -framework Security -framework ApplicationServices, \
+-    LDFLAGS_SUFFIX := $(LIBINSTRUMENT_LDFLAGS_SUFFIX), \
++    LDFLAGS_SUFFIX := $(LIBINSTRUMENT_LDFLAGS_SUFFIX) -ltinyiconv, \
+     LDFLAGS_SUFFIX_macosx := -liconv $(LIBZ), \
+     LDFLAGS_SUFFIX_solaris := $(LIBZ) -L $(INSTALL_LIBRARIES_HERE)/jli -ljli $(LIBDL) -lc, \
+     LDFLAGS_SUFFIX_linux := $(LIBZ) -L $(INSTALL_LIBRARIES_HERE)/jli -ljli $(LIBDL), \
 diff --git a/jdk/make/lib/SoundLibraries.gmk b/jdk/make/lib/SoundLibraries.gmk
-index b59a946..6d57b09 100644
+index b59a9462ec..6d57b09acd 100644
 --- a/jdk/make/lib/SoundLibraries.gmk
 +++ b/jdk/make/lib/SoundLibraries.gmk
 @@ -216,7 +216,7 @@ ifneq ($(filter jsoundalsa, $(EXTRA_SOUND_JNI_LIBS)), )
@@ -57938,6 +59238,406 @@ index 6a70d404f8..8de7e04e70 100644
          if (pHdr->Object == NULL) {
              ok = JNI_FALSE;
              break;
+diff --git a/jdk/src/share/tinyiconv/iconv.cpp b/jdk/src/share/tinyiconv/iconv.cpp
+new file mode 100644
+index 0000000000..b8a154237a
+--- /dev/null
++++ b/jdk/src/share/tinyiconv/iconv.cpp
+@@ -0,0 +1,394 @@
++/*
++ * Copyright (C) 2017 The Android Open Source Project
++ * All rights reserved.
++ *
++ * Redistribution and use in source and binary forms, with or without
++ * modification, are permitted provided that the following conditions
++ * are met:
++ *  * Redistributions of source code must retain the above copyright
++ *    notice, this list of conditions and the following disclaimer.
++ *  * Redistributions in binary form must reproduce the above copyright
++ *    notice, this list of conditions and the following disclaimer in
++ *    the documentation and/or other materials provided with the
++ *    distribution.
++ *
++ * THIS SOFTWARE IS PROVIDED BY THE COPYRIGHT HOLDERS AND CONTRIBUTORS
++ * "AS IS" AND ANY EXPRESS OR IMPLIED WARRANTIES, INCLUDING, BUT NOT
++ * LIMITED TO, THE IMPLIED WARRANTIES OF MERCHANTABILITY AND FITNESS
++ * FOR A PARTICULAR PURPOSE ARE DISCLAIMED. IN NO EVENT SHALL THE
++ * COPYRIGHT OWNER OR CONTRIBUTORS BE LIABLE FOR ANY DIRECT, INDIRECT,
++ * INCIDENTAL, SPECIAL, EXEMPLARY, OR CONSEQUENTIAL DAMAGES (INCLUDING,
++ * BUT NOT LIMITED TO, PROCUREMENT OF SUBSTITUTE GOODS OR SERVICES; LOSS
++ * OF USE, DATA, OR PROFITS; OR BUSINESS INTERRUPTION) HOWEVER CAUSED
++ * AND ON ANY THEORY OF LIABILITY, WHETHER IN CONTRACT, STRICT LIABILITY,
++ * OR TORT (INCLUDING NEGLIGENCE OR OTHERWISE) ARISING IN ANY WAY OUT
++ * OF THE USE OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF
++ * SUCH DAMAGE.
++ */
++
++#ifdef __ANDROID__
++
++#include <stdint.h>
++
++// for char16_t and char32_t
++typedef uint32_t char32_t;
++typedef uint16_t char16_t;
++
++#include <ctype.h>
++
++#include "iconv.h"
++#include <endian.h>
++#include <errno.h>
++#include <stdlib.h>
++#include <string.h>
++#include <uchar.h>
++
++#include "bionic_mbstate.h"
++
++
++#ifdef __cplusplus
++# define INVALID_ICONV_T reinterpret_cast<iconv_t>(-1)
++#else // !__cplusplus
++# define INVALID_ICONV_T (iconv_t)(-1)
++#endif // __cplusplus
++
++// Ideally we'd use icu4c but the API mismatch seems too great. So we just offer something
++// equivalent to (but slightly easier to use for runs of text than) <uchar.h>. If you're
++// here to add more encodings, consider working on finishing the icu4c NDK wrappers instead.
++
++#ifdef __cplusplus
++ enum Encoding
++#else
++ typedef enum
++#endif // __cplusplus
++{
++  US_ASCII,
++  UTF_8,
++  UTF_16_LE,
++  UTF_16_BE,
++  UTF_32_LE,
++  UTF_32_BE,
++  WCHAR_T,
++#ifdef __cplusplus
++ };
++#else
++ } Encoding;
++#endif // __cplusplus
++
++#ifdef __cplusplus
++ enum Mode
++#else
++ typedef enum
++#endif // __cplusplus
++{
++  ERROR,
++  IGNORE,
++  TRANSLIT,
++#ifdef __cplusplus
++ };
++#else
++ } Mode;
++#endif // __cplusplus
++
++// This matching is strange but true.
++// See http://www.unicode.org/reports/tr22/#Charset_Alias_Matching.
++static bool __match_encoding(const char* lhs, const char* rhs) {
++  while (*lhs && *rhs) {
++    // Skip non-alnum in lhs; "UTF-8", "UTF_8", "UTF8", "UTF 8" are all equivalent.
++    // Also implement the "delete each 0 that is not preceded by a digit" rule.
++    for (; *lhs; ++lhs) {
++      if (isalnum(*lhs) && (*lhs != '0' || !isdigit(*(lhs + 1)))) break;
++    }
++    // Case doesn't matter either.
++    if (tolower(*lhs) != tolower(*rhs)) break;
++    ++lhs;
++    ++rhs;
++  }
++  // As a special case we treat the GNU "//" extensions as end of string.
++  if ((*lhs == '\0' || strstr(lhs, "//") == lhs) && *rhs == '\0') return true;
++  return false;
++}
++
++static bool __parse_encoding(const char* s, Encoding* encoding, Mode* mode) {
++  const char* suffix = strstr(s, "//");
++  if (suffix) {
++    if (!mode) return false;
++    if (strcmp(suffix, "//IGNORE") == 0) {
++      *mode = IGNORE;
++    } else if (strcmp(suffix, "//TRANSLIT") == 0) {
++      *mode = TRANSLIT;
++    } else {
++      return false;
++    }
++  }
++  if (__match_encoding(s, "utf8")) {
++    *encoding = UTF_8;
++  } else if (__match_encoding(s, "ascii") || __match_encoding(s, "usascii")) {
++    *encoding = US_ASCII;
++  } else if (__match_encoding(s, "utf16le")) {
++    *encoding = UTF_16_LE;
++  } else if (__match_encoding(s, "utf16be")) {
++    *encoding = UTF_16_BE;
++  } else if (__match_encoding(s, "utf32le")) {
++    *encoding = UTF_32_LE;
++  } else if (__match_encoding(s, "utf32be")) {
++    *encoding = UTF_32_BE;
++  } else if (__match_encoding(s, "wchart")) {
++    *encoding = WCHAR_T;
++  } else {
++    return false;
++  }
++  return true;
++}
++
++struct __iconv_t {
++  Encoding src_encoding;
++  Encoding dst_encoding;
++  Mode mode;
++  __iconv_t() : mode(ERROR) {
++  }
++  int Convert(char** src_buf0, size_t* src_bytes_left0, char** dst_buf0, size_t* dst_bytes_left0) {
++    // Reset state.
++    wc = 0;
++    memset(&ps, 0, sizeof(ps));
++    replacement_count = 0;
++    ignored = false;
++    src_buf = src_buf0;
++    src_bytes_left = src_bytes_left0;
++    dst_buf = dst_buf0;
++    dst_bytes_left = dst_bytes_left0;
++    while (*src_bytes_left > 0) {
++      if (!GetNext() || !Convert()) return -1;
++    }
++    return Done();
++  }
++ private:
++  char32_t wc;
++  char buf[16];
++  size_t src_bytes_used;
++  size_t dst_bytes_used;
++  mbstate_t ps;
++  size_t replacement_count;
++  bool ignored;
++  char** src_buf;
++  size_t* src_bytes_left;
++  char** dst_buf;
++  size_t* dst_bytes_left;
++  bool GetNext() {
++    errno = 0;
++    switch (src_encoding) {
++      case US_ASCII:
++        wc = **src_buf;
++        src_bytes_used = 1;
++        if (wc > 0x7f) errno = EILSEQ;
++        break;
++      case UTF_8:
++        src_bytes_used = mbrtoc32(&wc, *src_buf, *src_bytes_left, &ps);
++        if (src_bytes_used == __MB_ERR_ILLEGAL_SEQUENCE) {
++          break;  // EILSEQ already set.
++        } else if (src_bytes_used == __MB_ERR_INCOMPLETE_SEQUENCE) {
++          errno = EINVAL;
++          return false;
++        }
++        break;
++      case UTF_16_BE:
++      case UTF_16_LE: {
++        if (*src_bytes_left < 2) {
++          errno = EINVAL;
++          return false;
++        }
++        bool swap = (src_encoding == UTF_16_BE);
++        wc = In16(*src_buf, swap);
++        // 0xd800-0xdbff: high surrogates
++        // 0xdc00-0xdfff: low surrogates
++        if (wc >= 0xd800 && wc <= 0xdfff) {
++          if (wc >= 0xdc00) {  // Low surrogate before high surrogate.
++            errno = EILSEQ;
++            return false;
++          }
++          if (*src_bytes_left < 4) {
++            errno = EINVAL;
++            return false;
++          }
++          uint16_t hi = wc;
++          uint16_t lo = In16(*src_buf + 2, swap);
++          wc = 0x10000 + ((hi - 0xd800) << 10) + (lo - 0xdc00);
++          src_bytes_used = 4;
++        }
++        break;
++      }
++      case UTF_32_BE:
++      case UTF_32_LE:
++      case WCHAR_T:
++        if (*src_bytes_left < 4) {
++          errno = EINVAL;
++          return false;
++        }
++        wc = In32(*src_buf, (src_encoding == UTF_32_BE));
++        break;
++    }
++    if (errno == EILSEQ) {
++      switch (mode) {
++        case ERROR:
++          return false;
++        case IGNORE:
++          *src_buf += src_bytes_used;
++          *src_bytes_left -= src_bytes_used;
++          ignored = true;
++          return GetNext();
++        case TRANSLIT:
++          wc = '?';
++          ++replacement_count;
++          return true;
++      }
++    }
++    return true;
++  }
++
++  bool Convert() {
++    errno = 0;
++    switch (dst_encoding) {
++      case US_ASCII:
++        buf[0] = wc;
++        dst_bytes_used = 1;
++        if (wc > 0x7f) errno = EILSEQ;
++        break;
++      case UTF_8:
++        dst_bytes_used = c32rtomb(buf, wc, &ps);
++        if (dst_bytes_used == __MB_ERR_ILLEGAL_SEQUENCE) {
++          break;  // EILSEQ already set.
++        } else if (dst_bytes_used == __MB_ERR_INCOMPLETE_SEQUENCE) {
++          errno = EINVAL;
++          return false;
++        }
++        break;
++      case UTF_16_BE:
++      case UTF_16_LE: {
++        bool swap = (dst_encoding == UTF_16_BE);
++        if (wc < 0x10000) {  // BMP.
++          Out16(buf, wc, swap);
++        } else {  // Supplementary plane; output surrogate pair.
++          wc -= 0x10000;
++          char16_t hi = 0xd800 | (wc >> 10);
++          char16_t lo = 0xdc00 | (wc & 0x3ff);
++          Out16(buf + 0, hi, swap);
++          Out16(buf + 2, lo, swap);
++          dst_bytes_used = 4;
++        }
++      } break;
++      case UTF_32_BE:
++      case UTF_32_LE:
++      case WCHAR_T:
++        Out32(wc, (dst_encoding == UTF_32_BE));
++        break;
++    }
++    if (errno == EILSEQ) {
++      if (mode == IGNORE) {
++        *src_buf += src_bytes_used;
++        *src_bytes_left -= src_bytes_used;
++        ignored = true;
++        return true;
++      } else if (mode == TRANSLIT) {
++        wc = '?';
++        ++replacement_count;
++        return Convert();
++      }
++      return false;
++    }
++    return Emit();
++  }
++
++  uint16_t In16(const char* buf, bool swap) {
++#ifdef __cplusplus
++    const uint8_t* src = reinterpret_cast<const uint8_t*>(buf);
++#else // !__cplusplus
++    const uint8_t* src = (const uint8_t*)(buf);
++#endif // __cplusplus
++    uint16_t wc = (src[0]) | (src[1] << 8);
++    if (swap) wc = __swap16(wc);
++    src_bytes_used = 2;
++    return wc;
++  }
++
++  uint32_t In32(const char* buf, bool swap) {
++#ifdef __cplusplus
++    const uint8_t* src = reinterpret_cast<const uint8_t*>(buf);
++#else // !__cplusplus
++    const uint8_t* src = (const uint8_t*)(buf);
++#endif // __cplusplus
++    uint32_t wc = (src[0]) | (src[1] << 8) | (src[2] << 16) | (src[3] << 24);
++    if (swap) wc = __swap32(wc);
++    src_bytes_used = 4;
++    return wc;
++  }
++
++  void Out16(char* dst, char16_t ch, bool swap) {
++    if (swap) ch = __swap16(ch);
++    dst[0] = ch;
++    dst[1] = ch >> 8;
++    dst_bytes_used = 2;
++  }
++
++  void Out32(char32_t ch, bool swap) {
++    if (swap) ch = __swap32(ch);
++    buf[0] = ch;
++    buf[1] = ch >> 8;
++    buf[2] = ch >> 16;
++    buf[3] = ch >> 24;
++    dst_bytes_used = 4;
++  }
++
++  bool Emit() {
++    if (dst_bytes_used > *dst_bytes_left) {
++      errno = E2BIG;
++      return false;
++    }
++    memcpy(*dst_buf, buf, dst_bytes_used);
++    *src_buf += src_bytes_used;
++    *src_bytes_left -= src_bytes_used;
++    *dst_buf += dst_bytes_used;
++    *dst_bytes_left -= dst_bytes_used;
++    return true;
++  }
++
++  int Done() {
++    if (mode == TRANSLIT) return replacement_count;
++    if (ignored) {
++      errno = EILSEQ;
++      return -1;
++    }
++    return 0;
++  }
++};
++
++iconv_t iconv_open(const char* __dst_encoding, const char* __src_encoding) {
++  iconv_t result = new __iconv_t;
++  if (!__parse_encoding(__src_encoding, &result->src_encoding, 0 /* nullptr */) ||
++      !__parse_encoding(__dst_encoding, &result->dst_encoding, &result->mode)) {
++    delete result;
++    errno = EINVAL;
++    return INVALID_ICONV_T;
++  }
++  return result;
++}
++
++size_t iconv(iconv_t __converter,
++             char** __src_buf, size_t* __src_bytes_left,
++             char** __dst_buf, size_t* __dst_bytes_left) {
++  if (__converter == INVALID_ICONV_T) {
++    errno = EBADF;
++    return -1;
++  }
++  return __converter->Convert(__src_buf, __src_bytes_left, __dst_buf, __dst_bytes_left);
++}
++
++int iconv_close(iconv_t __converter) {
++  if (__converter == INVALID_ICONV_T) {
++    errno = EBADF;
++    return -1;
++  }
++  delete __converter;
++  return 0;
++}
++
++#endif // __ANDROID__
 diff --git a/jdk/src/solaris/back/exec_md.c b/jdk/src/solaris/back/exec_md.c
 index b756be3297..f7680272b1 100644
 --- a/jdk/src/solaris/back/exec_md.c
@@ -59170,83 +60870,3 @@ index 303c96d788..aa555cc286 100644
 +    }
 +
      /**
-diff --git a/hotspot/make/linux/makefiles/defs.make b/hotspot/make/linux/makefiles/defs.make
-index ec41463..47dded2 100644
---- a/hotspot/make/linux/makefiles/defs.make
-+++ b/hotspot/make/linux/makefiles/defs.make
-@@ -331,6 +331,7 @@ ADD_SA_BINARIES/zero  =
- 
- -include $(HS_ALT_MAKE)/linux/makefiles/defs.make
- 
--EXPORT_LIST += $(ADD_SA_BINARIES/$(HS_ARCH))
-+# Android: no serviceability agent (its Linux side is glibc's)
-+# EXPORT_LIST += $(ADD_SA_BINARIES/$(HS_ARCH))
- 
- 
-diff --git a/hotspot/make/linux/makefiles/vm.make b/hotspot/make/linux/makefiles/vm.make
-index 982f13a..0629ba7 100644
---- a/hotspot/make/linux/makefiles/vm.make
-+++ b/hotspot/make/linux/makefiles/vm.make
-@@ -130,7 +130,7 @@ ASFLAGS += $(EXTRA_ASFLAGS)
- # the same could be done by separate execstack command
- LFLAGS += -Xlinker -z -Xlinker noexecstack
- 
--LIBS += -lm -ldl -lpthread
-+LIBS += -lm -ldl
- 
- # By default, link the *.o into the library, not the executable.
- LINK_INTO$(LINK_INTO) = LIBJVM
-diff --git a/jdk/make/lib/CoreLibraries.gmk b/jdk/make/lib/CoreLibraries.gmk
-index 854177f..2d088be 100644
---- a/jdk/make/lib/CoreLibraries.gmk
-+++ b/jdk/make/lib/CoreLibraries.gmk
-@@ -455,7 +455,7 @@ $(eval $(call SetupNativeCompilation,BUILD_LIBJLI, \
-     LDFLAGS_solaris := $(call SET_SHARED_LIBRARY_ORIGIN,/..), \
-     LDFLAGS_macosx := -framework Cocoa -framework Security -framework ApplicationServices -mmacosx-version-min=$(MACOSX_VERSION_MIN), \
-     LDFLAGS_SUFFIX_solaris := $(LIBZ) $(LIBDL) -lc, \
--    LDFLAGS_SUFFIX_linux := $(LIBZ) $(LIBDL) -lc -lpthread, \
-+    LDFLAGS_SUFFIX_linux := $(LIBZ) $(LIBDL) -lc, \
-     LDFLAGS_SUFFIX_aix := $(LIBZ) $(LIBDL),\
-     LDFLAGS_SUFFIX_macosx := $(LIBZ), \
-     LDFLAGS_SUFFIX_windows := \
-diff --git a/jdk/make/lib/NetworkingLibraries.gmk b/jdk/make/lib/NetworkingLibraries.gmk
-index 347c323..9a5fa13 100644
---- a/jdk/make/lib/NetworkingLibraries.gmk
-+++ b/jdk/make/lib/NetworkingLibraries.gmk
-@@ -72,7 +72,7 @@ $(eval $(call SetupNativeCompilation,BUILD_LIBNET, \
-         $(call SET_SHARED_LIBRARY_ORIGIN), \
-     LDFLAGS_SUFFIX_macosx := -ljvm -ljava, \
-     LDFLAGS_SUFFIX_solaris := -ljvm -ljava -lnsl -lsocket $(LIBDL) -lc, \
--    LDFLAGS_SUFFIX_linux := $(LIBDL) -ljvm -lpthread -ljava, \
-+    LDFLAGS_SUFFIX_linux := $(LIBDL) -ljvm -ljava, \
-     LDFLAGS_SUFFIX_aix := $(LIBDL) -ljvm -ljava,\
-     LDFLAGS_SUFFIX_windows := ws2_32.lib jvm.lib secur32.lib iphlpapi.lib \
-         delayimp.lib $(WIN_JAVA_LIB) advapi32.lib \
-diff --git a/jdk/make/lib/ServiceabilityLibraries.gmk b/jdk/make/lib/ServiceabilityLibraries.gmk
-index c951b11..fa1592e 100644
---- a/jdk/make/lib/ServiceabilityLibraries.gmk
-+++ b/jdk/make/lib/ServiceabilityLibraries.gmk
-@@ -92,7 +92,6 @@ $(eval $(call SetupNativeCompilation,BUILD_LIBDT_SOCKET, \
-     MAPFILE := $(JDK_TOPDIR)/make/mapfiles/libdt_socket/mapfile-vers, \
-     LDFLAGS := $(LDFLAGS_JDKLIB) \
-         $(call SET_SHARED_LIBRARY_ORIGIN), \
--    LDFLAGS_SUFFIX_linux := -lpthread, \
-     LDFLAGS_SUFFIX_solaris := -lnsl -lsocket -lc, \
-     LDFLAGS_SUFFIX_windows := $(LDFLAGS_JDKLIB_SUFFIX) -export:jdwpTransport_OnLoad ws2_32.lib, \
-     VERSIONINFO_RESOURCE := $(JDK_TOPDIR)/src/windows/resource/version.rc, \
-diff --git a/common/autoconf/hotspot-spec.gmk.in b/common/autoconf/hotspot-spec.gmk.in
-index 4497880..1d1498e 100644
---- a/common/autoconf/hotspot-spec.gmk.in
-+++ b/common/autoconf/hotspot-spec.gmk.in
-@@ -51,6 +51,11 @@ ALT_CUPS_HEADERS_PATH:=$(patsubst -I%,%,$(filter -I%,@CUPS_CFLAGS@))
- HOSTCC:=@FIXPATH@ @BUILD_CC@
- HOSTCXX:=@FIXPATH@ @BUILD_CXX@
- 
-+# HotSpot's makefiles tell clang by this (configure's toolchain doesn't reach them)
-+ifeq ($(TOOLCHAIN_TYPE), clang)
-+  USE_CLANG:=true
-+endif
-+
- ####################################################
- #
- # Legacy Hotspot support

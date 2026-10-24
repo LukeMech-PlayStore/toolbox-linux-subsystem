@@ -46,7 +46,7 @@ index 2d3880b363..77eb2ac3fd 100644
  
  void os::pause() {
 diff --git a/common/autoconf/build-aux/config.sub b/common/autoconf/build-aux/config.sub
-index cc958da..162e27c 100644
+index cc958da946..162e27c064 100644
 --- a/common/autoconf/build-aux/config.sub
 +++ b/common/autoconf/build-aux/config.sub
 @@ -30,7 +30,8 @@
@@ -70,31 +70,3 @@ index cc958da..162e27c 100644
          aarch64-* )
              config=`echo $1 | sed 's/^aarch64-/arm-/'`
              sub_args="$sub_args $config"
-diff --git a/common/autoconf/generated-configure.sh b/common/autoconf/generated-configure.sh
-index 344c316..0043b76 100644
---- a/common/autoconf/generated-configure.sh
-+++ b/common/autoconf/generated-configure.sh
-@@ -14880,7 +14880,8 @@ $as_echo "$with_jvm_variants" >&6; }
- 
- 
- 
--  INCLUDE_SA=true
-+  # Android: no serviceability agent (its Linux side is glibc's)
-+  INCLUDE_SA=false
-   if test "x$JVM_VARIANT_ZERO" = xtrue ; then
-     INCLUDE_SA=false
-   fi
-diff --git a/hotspot/make/linux/makefiles/saproc.make b/hotspot/make/linux/makefiles/saproc.make
-index ffc0ec5..beaff9f 100644
---- a/hotspot/make/linux/makefiles/saproc.make
-+++ b/hotspot/make/linux/makefiles/saproc.make
-@@ -69,7 +69,8 @@ endif
- 
- ifneq ($(wildcard $(AGENT_DIR)),)
- ifneq ($(filter-out ia64 zero,$(SRCARCH)),)
--  BUILDLIBSAPROC = $(LIBSAPROC)
-+  # Android: no serviceability agent (its Linux side is glibc's)
-+  # BUILDLIBSAPROC = $(LIBSAPROC)
- endif
- endif
- 
