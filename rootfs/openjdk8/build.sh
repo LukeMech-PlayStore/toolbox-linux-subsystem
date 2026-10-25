@@ -150,6 +150,10 @@ bash ./configure \
 # Its wrapper says nothing of configure failing: what that makes tells
 BUILD="build/linux-$JDK_CPU-normal-$VM-release"
 [ -f "$BUILD/spec.gmk" ] || { echo "Error: configure failed" >&2; exit 1; }
+# Its executables (bin/java...) position-independent, as Android 5.0 on runs no other: the 64-bit
+# toolchains make them so, the 32-bit ones don't. Compiled so too where nothing says -fPIC (which the
+# launchers' own flags add after these, and which links as well)
+printf '%s\n' 'CFLAGS_JDKEXE += -fPIE' 'CXXFLAGS_JDKEXE += -fPIE' 'LDFLAGS_JDKEXE += -pie' >> "$BUILD/spec.gmk"
 cd "$BUILD"
 # Parallel makes sometimes trip over their own order: once more, as PojavLauncher does
 make JOBS="$JOBS" images || make JOBS="$JOBS" images
@@ -178,6 +182,12 @@ find "$JRE" -type f \( -name '*.so' -o -path '*/bin/*' \) -exec sh -c 'head -c4 
         $STRIP --strip-unneeded "$f"
         patchelf --remove-rpath "$f"
     done
+# An ELF's e_type (2 bytes at 16, little-endian on every ABI): 3 (ET_DYN) for a PIE, 2 (ET_EXEC) for what
+# Android refuses ("only support position-independent executables")
+for f in "$JRE"/bin/*; do
+    head -c4 "$f" | grep -q ELF || continue
+    [ "$(od -An -t u2 -j16 -N2 "$f" | tr -d ' ')" = 3 ] || { echo "Error: $f isn't position-independent" >&2; exit 1; }
+done
 
 # The app runs it as java-8 (as jdk.sh links the other versions'): its libraries found where it is
 mkdir -p "$OUT/usr/bin"
