@@ -178,6 +178,11 @@ rootfs:
       packages:
         - cloudflared
 
+    bore: # bore.pub's tunnels: a server reached from anywhere at bore.pub:<port>, with no account
+      requires: [core]
+      packages:
+        - bore
+
 
 # ------------------------------------------------------------------------------------------------
 # sources: parts built here (rootfs/<name>/build.sh, build-<name>.yml), each with its own NDK and API
