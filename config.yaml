@@ -183,6 +183,12 @@ rootfs:
       packages:
         - bore
 
+    iperf3: # Network tools' bandwidth test (client and server; ping, traceroute and the scans are Android's)
+      requires: [core]
+      packages:
+        - iperf3 # 3.17+ for --json-stream (the app reads its intervals as they come)
+      # Nothing to exclude: it links OpenSSL alone (libiperf's auth), the core's (Python and FFmpeg link it too)
+
 
 # ------------------------------------------------------------------------------------------------
 # sources: parts built here (rootfs/<name>/build.sh, build-<name>.yml), each with its own NDK and API
