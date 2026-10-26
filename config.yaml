@@ -183,6 +183,16 @@ rootfs:
       packages:
         - bore
 
+    pdf: # PDF tools: merging, splitting, compressing
+      requires: [core]
+      packages:
+        - qpdf # Merging, splitting, rotating, passwords (Apache-2.0)
+        # Compressing (pdfwrite; AGPL-3.0). Built without X11 or CUPS, its init files aren't compiled in:
+        # they, its 35 standard fonts and CMaps are in share/ghostscript/Resource, its data (comes along)
+        - ghostscript
+      exclude:
+        - ttf-dejavu # As ffmpeg's: Fontconfig finds Android's fonts, Ghostscript has its own
+
 
 # ------------------------------------------------------------------------------------------------
 # sources: parts built here (rootfs/<name>/build.sh, build-<name>.yml), each with its own NDK and API
