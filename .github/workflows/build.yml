@@ -2,6 +2,11 @@ name: Build
 
 # Monthly (and on demand): PRoot (build-proot.yml) and the rootfs (build.sh in termux-docker) for every
 # ABI, released together: the app gets both from one release (rootfs.tar.gz)
+#
+# A pull request's is built the same way, on the latest release, but not released: its rootfs.tar.gz is the
+# run's artifact (rootfs), for the app's pull request to test with (its gradle.properties pinning
+# linuxRelease=pr-<number>: the app takes the newest successful run of the pull request's head). Its parts
+# that changed get the version pr-<number>.<commit>, so the app and a phone tell each push's apart.
 
 on:
   schedule:
@@ -9,6 +14,11 @@ on:
   # And with every change of what's built (not of the docs alone), always released
   push:
     branches: [main]
+    paths-ignore:
+      - '**.md'
+      - 'LICENSE'
+  # A pull request's, as an artifact (see above)
+  pull_request:
     paths-ignore:
       - '**.md'
       - 'LICENSE'
@@ -23,13 +33,16 @@ on:
         type: boolean
         default: false
 
+# actions: the earlier runs' rebuilt packages (their artifacts, see the build job)
 permissions:
   contents: write
+  actions: read
 
 # One at a time: each release's tag and parts build on the one before. A newer run cancels the one
-# going (what it would release is out of date)
+# going (what it would release is out of date). A pull request's runs are apart, one at a time each:
+# they build on the latest release, never on each other's
 concurrency:
-  group: build
+  group: build-${{ github.event.pull_request.number || 'main' }}
   cancel-in-progress: true
 
 jobs:
@@ -115,7 +128,15 @@ jobs:
 
       - name: Calculate Next Version
         id: calc_ver
+        env:
+          PR: ${{ github.event.pull_request.number }}
+          HEAD_SHA: ${{ github.event.pull_request.head.sha }}
         run: |
+          # A pull request's: a version of each push (its new parts', the one the app checks), no tag
+          if [ -n "$PR" ]; then
+            echo "version=pr-$PR.${HEAD_SHA::7}" >> $GITHUB_OUTPUT
+            exit 0
+          fi
           BASE_VER=$(date +'%y.%m.%d')
           NEW_TAG="$BASE_VER"
           EXISTING_TAGS=$(git tag -l "${BASE_VER}*")
@@ -245,15 +266,34 @@ jobs:
           GH_TOKEN: ${{ github.token }}
           PREVIOUS: ${{ needs.prepare.outputs.previous }}
           REBUILD_ALL: ${{ inputs.rebuild_all }}
+          ARCH: ${{ matrix.arch }}
+          HEAD_REF: ${{ github.head_ref }}
         run: |
-          # What the latest release's build built with Termux's recipes (rebuilt packages, 16 KB
-          # rebuilds), each as <key>.tar: termux-build.sh takes what's built of the same again
+          # What earlier builds built with Termux's recipes (rebuilt packages, 16 KB rebuilds), each as <key>.tar:
+          # termux-build.sh takes what's built of the same again. Each run keeps its own as its artifact
+          # (rebuilt-<arch>, below): main's newest that has one, and a pull request's own newest too (what it
+          # changed, e.g. a new FFmpeg, isn't in main's)
           mkdir -p rebuilt-cache
-          if [ -n "$PREVIOUS" ] && [ "$REBUILD_ALL" != true ] \
-            && gh release download "$PREVIOUS" -R "$GITHUB_REPOSITORY" -p "rebuilt-${{ matrix.arch }}.tar"; then
-            tar -xf "rebuilt-${{ matrix.arch }}.tar" -C rebuilt-cache
-            rm "rebuilt-${{ matrix.arch }}.tar"
-          fi
+          [ "$REBUILD_ALL" == true ] && exit 0
+          # <branch> <which of its runs (jq)>: its newest run's that has one
+          take() {
+            local id
+            for id in $(gh run list -R "$GITHUB_REPOSITORY" -w build.yml -b "$1" -L 20 --json databaseId,event \
+              --jq ".[] | select(.databaseId != $GITHUB_RUN_ID and ($2)) | .databaseId"); do
+              if gh run download "$id" -R "$GITHUB_REPOSITORY" -n "rebuilt-$ARCH" -D rebuilt-run 2>/dev/null; then
+                tar -xf "rebuilt-run/rebuilt-$ARCH.tar" -C rebuilt-cache
+                rm -rf rebuilt-run
+                echo "Rebuilt packages of run $id"
+                return 0
+              fi
+            done
+            return 1
+          }
+          if [ -n "$HEAD_REF" ]; then take "$HEAD_REF" '.event == "pull_request"' || true; fi
+          # Earlier releases kept them as assets instead (until a run of main has them)
+          take main '.event != "pull_request"' \
+            || { [ -n "$PREVIOUS" ] && gh release download "$PREVIOUS" -R "$GITHUB_REPOSITORY" -p "rebuilt-$ARCH.tar" \
+              && tar -xf "rebuilt-$ARCH.tar" -C rebuilt-cache && rm "rebuilt-$ARCH.tar"; } || true
           ls -la rebuilt-cache
 
       - name: Build Rootfs
@@ -279,9 +319,9 @@ jobs:
           docker cp "rootfs:$HOME_DIR/rootfs" stage
           docker cp "rootfs:$HOME_DIR/out/." manifests
           docker rm rootfs
-          # What it built with Termux's recipes (or took again), for the next release
+          # What it built with Termux's recipes (or took again), for the next build (its artifact, below)
           mkdir -p manifests/rebuilt
-          tar -cf "out/rebuilt-$ARCH.tar" -C manifests/rebuilt .
+          tar -cf "rebuilt-$ARCH.tar" -C manifests/rebuilt .
           rm -rf manifests/rebuilt
 
           # The parts built here (a part's source, e.g. jdk8's openjdk8: build-openjdk8.yml), their files as that build
@@ -312,6 +352,17 @@ jobs:
           du -sh stage/* out/"$ARCH"/*
           # Each part's size unpacked and as an archive, and what it holds, for parts.json
           python3 rootfs/release.py sizes stage "out/$ARCH" manifests > "out/sizes-$ARCH.json"
+
+      # What it built or took with Termux's recipes, for the next builds (Rebuilt Before): kept as long as GitHub
+      # keeps artifacts, longer than a month between builds. Already packed
+      - name: Keep What It Rebuilt
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          name: rebuilt-${{ matrix.arch }}
+          path: rebuilt-${{ matrix.arch }}.tar
+          compression-level: 0
+          retention-days: 90
+          if-no-files-found: error
 
       - name: Check Android Libraries
         run: |
@@ -552,8 +603,10 @@ jobs:
           fi
           FINAL_LOG="## 🧩 Parts"$'\n\n'"$VERSIONS"$'\n'"$FINAL_LOG"
 
-          # A push changes what's built or how it's released (e.g. what the app gets of it): always a release
-          if [ "${{ inputs.force_release }}" == "true" ] || [ "${{ github.event_name }}" == "push" ]; then
+          # A push changes what's built or how it's released (e.g. what the app gets of it): always a release;
+          # a pull request's always packed too, for the app's to test with
+          if [ "${{ inputs.force_release }}" == "true" ] || [ "${{ github.event_name }}" == "push" ] \
+            || [ "${{ github.event_name }}" == "pull_request" ]; then
             CHANGES_DETECTED="true"
           fi
 
@@ -568,8 +621,18 @@ jobs:
           tar -czf rootfs.tar.gz -C final_package .
           tar -tzvf rootfs.tar.gz
 
+      # A pull request's: the app's pull request downloads it (LinuxPackages.kt in the app). Already compressed
+      - name: Upload the Pull Request's Build
+        if: steps.changelog.outputs.needed == 'true' && github.event_name == 'pull_request'
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          name: rootfs
+          path: rootfs.tar.gz
+          compression-level: 0
+          if-no-files-found: error
+
       - name: Push Release
-        if: steps.changelog.outputs.needed == 'true'
+        if: steps.changelog.outputs.needed == 'true' && github.event_name != 'pull_request'
         uses: softprops/action-gh-release@efb35369e0ad2afab669f228072c1b0d510eae64 # v3.0.3
         with:
           tag_name: ${{ needs.prepare.outputs.version }}
@@ -582,10 +645,8 @@ jobs:
               ABIs: ${{ join(fromJSON(needs.prepare.outputs.matrix).*.abi, ', ') }}
               
               ${{ steps.changelog.outputs.full_log }}
-          # rebuilt-<arch>.tar: what its builds built with Termux's recipes, which the next one takes again
           files: |
             rootfs.tar.gz
             parts.json
             manifests/manifest-*.txt
-            current_assets/rebuilt-*.tar
           make_latest: true

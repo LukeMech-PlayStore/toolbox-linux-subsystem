@@ -57,6 +57,12 @@ Releases are in the releases tab, with tags `YY.MM.DD`, each with the rootfs and
 What takes long is built anew only when what it's built of changed since the latest release:
 - PRoot: its versions (`latest` resolved first), NDK, API level and `proot/` (the core's `proot` in that release's `parts.json`); else that release's PRoot is taken (`reuse-proot`).
 - A source (OpenJDK 8): its `config.yaml` section, `rootfs/<source>/`, `ndk.sh` and its workflow (`sources` in `parts.json`); else its part's files in that release are taken (`reuse-openjdk8`).
-- Packages built with Termux's recipes (FFmpeg, the 16 KB rebuilds): `termux-build.sh` keys each by itself, the package and what's dropped, its recipe, and the versions of what it builds against and links; each release carries what its build built as `rebuilt-<arch>.tar`, which the next build takes again where the key is the same.
+- Packages built with Termux's recipes (FFmpeg, the 16 KB rebuilds): `termux-build.sh` keys each by itself, the package and what's dropped, its recipe, and the versions of what it builds against and links; each run keeps what it built or took as its artifact `rebuilt-<arch>` (90 days, longer than a month between builds), and the next build takes again what has the same key: main's newest run's, and a pull request's own newest too, so what it changes isn't built again by every push.
 
 `rebuild_all` (Build, run by hand) builds them all anew.
+
+### Pull requests
+
+A pull request is built as `main` is, on the latest release, but not released: its `rootfs.tar.gz` is the run's artifact (`rootfs`). The parts it changes get the version `pr-<number>.<commit>`, so each push's build is told apart.
+
+To test it in the app, open a pull request there too, pinning `linuxRelease=pr-<number>` in its `gradle.properties`: the app takes the newest successful build of this pull request's head. Once this pull request is merged and released, pin that release (`./gradlew updateLinuxRelease`) before merging the app's; its tests fail on a `pr-` pin.
