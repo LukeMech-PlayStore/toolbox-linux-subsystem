@@ -60,3 +60,9 @@ What takes long is built anew only when what it's built of changed since the lat
 - Packages built with Termux's recipes (FFmpeg, the 16 KB rebuilds): `termux-build.sh` keys each by itself, the package and what's dropped, its recipe, and the versions of what it builds against and links; each release carries what its build built as `rebuilt-<arch>.tar`, which the next build takes again where the key is the same.
 
 `rebuild_all` (Build, run by hand) builds them all anew.
+
+### Pull requests
+
+A pull request is built as `main` is, on the latest release, but not released: its `rootfs.tar.gz` is the run's artifact (`rootfs`). The parts it changes get the version `pr-<number>.<commit>`, so each push's build is told apart.
+
+To test it in the app, open a pull request there too, pinning `linuxRelease=pr-<number>` in its `gradle.properties`: the app takes the newest successful build of this pull request's head. Once this pull request is merged and released, pin that release (`./gradlew updateLinuxRelease`) before merging the app's; its tests fail on a `pr-` pin.

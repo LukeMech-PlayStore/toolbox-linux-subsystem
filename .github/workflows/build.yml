@@ -2,6 +2,11 @@ name: Build
 
 # Monthly (and on demand): PRoot (build-proot.yml) and the rootfs (build.sh in termux-docker) for every
 # ABI, released together: the app gets both from one release (rootfs.tar.gz)
+#
+# A pull request's is built the same way, on the latest release, but not released: its rootfs.tar.gz is the
+# run's artifact (rootfs), for the app's pull request to test with (its gradle.properties pinning
+# linuxRelease=pr-<number>: the app takes the newest successful run of the pull request's head). Its parts
+# that changed get the version pr-<number>.<commit>, so the app and a phone tell each push's apart.
 
 on:
   schedule:
@@ -9,6 +14,11 @@ on:
   # And with every change of what's built (not of the docs alone), always released
   push:
     branches: [main]
+    paths-ignore:
+      - '**.md'
+      - 'LICENSE'
+  # A pull request's, as an artifact (see above)
+  pull_request:
     paths-ignore:
       - '**.md'
       - 'LICENSE'
@@ -27,9 +37,10 @@ permissions:
   contents: write
 
 # One at a time: each release's tag and parts build on the one before. A newer run cancels the one
-# going (what it would release is out of date)
+# going (what it would release is out of date). A pull request's runs are apart, one at a time each:
+# they build on the latest release, never on each other's
 concurrency:
-  group: build
+  group: build-${{ github.event.pull_request.number || 'main' }}
   cancel-in-progress: true
 
 jobs:
@@ -115,7 +126,15 @@ jobs:
 
       - name: Calculate Next Version
         id: calc_ver
+        env:
+          PR: ${{ github.event.pull_request.number }}
+          HEAD_SHA: ${{ github.event.pull_request.head.sha }}
         run: |
+          # A pull request's: a version of each push (its new parts', the one the app checks), no tag
+          if [ -n "$PR" ]; then
+            echo "version=pr-$PR.${HEAD_SHA::7}" >> $GITHUB_OUTPUT
+            exit 0
+          fi
           BASE_VER=$(date +'%y.%m.%d')
           NEW_TAG="$BASE_VER"
           EXISTING_TAGS=$(git tag -l "${BASE_VER}*")
@@ -552,8 +571,10 @@ jobs:
           fi
           FINAL_LOG="## 🧩 Parts"$'\n\n'"$VERSIONS"$'\n'"$FINAL_LOG"
 
-          # A push changes what's built or how it's released (e.g. what the app gets of it): always a release
-          if [ "${{ inputs.force_release }}" == "true" ] || [ "${{ github.event_name }}" == "push" ]; then
+          # A push changes what's built or how it's released (e.g. what the app gets of it): always a release;
+          # a pull request's always packed too, for the app's to test with
+          if [ "${{ inputs.force_release }}" == "true" ] || [ "${{ github.event_name }}" == "push" ] \
+            || [ "${{ github.event_name }}" == "pull_request" ]; then
             CHANGES_DETECTED="true"
           fi
 
@@ -568,8 +589,18 @@ jobs:
           tar -czf rootfs.tar.gz -C final_package .
           tar -tzvf rootfs.tar.gz
 
+      # A pull request's: the app's pull request downloads it (LinuxPackages.kt in the app). Already compressed
+      - name: Upload the Pull Request's Build
+        if: steps.changelog.outputs.needed == 'true' && github.event_name == 'pull_request'
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          name: rootfs
+          path: rootfs.tar.gz
+          compression-level: 0
+          if-no-files-found: error
+
       - name: Push Release
-        if: steps.changelog.outputs.needed == 'true'
+        if: steps.changelog.outputs.needed == 'true' && github.event_name != 'pull_request'
         uses: softprops/action-gh-release@efb35369e0ad2afab669f228072c1b0d510eae64 # v3.0.3
         with:
           tag_name: ${{ needs.prepare.outputs.version }}
