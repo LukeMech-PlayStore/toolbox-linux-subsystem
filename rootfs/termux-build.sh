@@ -95,8 +95,10 @@ key=$({
   sha256sum "$0" | cut -d' ' -f1
   echo "$package $TERMUX_ARCH"; printf '%s\n' "${DROP[@]}"
   git -C "$REPO" rev-parse "HEAD:packages/$package" "HEAD:scripts/properties.sh"
-  # shellcheck disable=SC2046
-  dpkg-query -W -f='${Package} ${Version}\n' $deps $(names "${TERMUX_PKG_DEPENDS:-}") 2>/dev/null | sort || true
+  # (none, none queried: dpkg-query without names lists every installed package)
+  linked=$(printf '%s\n' $deps $(names "${TERMUX_PKG_DEPENDS:-}"))
+  # shellcheck disable=SC2086
+  [ -z "$linked" ] || dpkg-query -W -f='${Package} ${Version}\n' $linked 2>/dev/null | sort || true
 } | sha256sum | cut -d' ' -f1)
 keep_built() {
   [ -n "${REBUILT_OUT:-}" ] || return 0
