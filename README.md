@@ -57,7 +57,7 @@ Releases are in the releases tab, with tags `YY.MM.DD`, each with the rootfs and
 What takes long is built anew only when what it's built of changed since the latest release:
 - PRoot: its versions (`latest` resolved first), NDK, API level and `proot/` (the core's `proot` in that release's `parts.json`); else that release's PRoot is taken (`reuse-proot`).
 - A source (OpenJDK 8): its `config.yaml` section, `rootfs/<source>/`, `ndk.sh` and its workflow (`sources` in `parts.json`); else its part's files in that release are taken (`reuse-openjdk8`).
-- Packages built with Termux's recipes (FFmpeg, the 16 KB rebuilds): `termux-build.sh` keys each by itself, the package and what's dropped, its recipe, and the versions of what it builds against and links; each release carries what its build built as `rebuilt-<arch>.tar`, which the next build takes again where the key is the same.
+- Packages built with Termux's recipes (FFmpeg, the 16 KB rebuilds): `termux-build.sh` keys each by itself, the package and what's dropped, its recipe, and the versions of what it builds against and links; each release carries what its build built as `rebuilt-<arch>.tar`, which the next build takes again where the key is the same. A pull request's build also takes what its earlier pushes built (its own Actions cache, `rebuilt-<arch>-pr<number>-…`), so what it changes isn't built again by every push.
 
 `rebuild_all` (Build, run by hand) builds them all anew.
 

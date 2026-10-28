@@ -259,6 +259,17 @@ jobs:
           name: openjdk8-${{ matrix.abi }}
           path: built/openjdk8
 
+      # A pull request's: what its earlier pushes built with Termux's recipes too (what it changed, e.g. a new
+      # FFmpeg, isn't in the release), so a new push builds only what changed since. Its own cache (a pull
+      # request's runs read only theirs and main's), the newest of them; the release's are added below
+      - name: Rebuilt by the Pull Request Before
+        if: github.event_name == 'pull_request' && inputs.rebuild_all != true
+        uses: actions/cache/restore@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
+        with:
+          path: rebuilt-cache
+          key: rebuilt-${{ matrix.arch }}-pr${{ github.event.pull_request.number }}-${{ github.run_id }}-${{ github.run_attempt }}
+          restore-keys: rebuilt-${{ matrix.arch }}-pr${{ github.event.pull_request.number }}-
+
       - name: Rebuilt Before
         env:
           GH_TOKEN: ${{ github.token }}
@@ -331,6 +342,23 @@ jobs:
           du -sh stage/* out/"$ARCH"/*
           # Each part's size unpacked and as an archive, and what it holds, for parts.json
           python3 rootfs/release.py sizes stage "out/$ARCH" manifests > "out/sizes-$ARCH.json"
+
+      # A pull request's: what this build built or took (as the release keeps it), for its next push. A cache
+      # entry can't be overwritten: one per run, the newest restored
+      - name: Keep What the Pull Request Rebuilt
+        if: github.event_name == 'pull_request'
+        run: |
+          rm -rf rebuilt-cache
+          mkdir rebuilt-cache
+          tar -xf "out/rebuilt-${{ matrix.arch }}.tar" -C rebuilt-cache
+          ls -la rebuilt-cache
+
+      - name: Save What the Pull Request Rebuilt
+        if: github.event_name == 'pull_request'
+        uses: actions/cache/save@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
+        with:
+          path: rebuilt-cache
+          key: rebuilt-${{ matrix.arch }}-pr${{ github.event.pull_request.number }}-${{ github.run_id }}-${{ github.run_attempt }}
 
       - name: Check Android Libraries
         run: |
